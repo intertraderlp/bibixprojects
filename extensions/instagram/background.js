@@ -1364,16 +1364,24 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
   /* ---- AI DM Reply via Groq ---- */
   if (msg.action === "GET_AI_DM_REPLY") {
-    chrome.storage.local.get("groqApiKey", async ({ groqApiKey }) => {
-      if (!groqApiKey) { sendResponse({ error: "No API key saved." }); return; }
-
-      const prompt = msg.context
-        ? `You are replying to an Instagram Direct Message. Here is the recent conversation:\n${msg.context}\n\nWrite a short, warm, natural reply to their last message (1-2 sentences max). Be friendly and conversational. Do not start with "Hi" or "Hey" if they already greeted. Write only the reply text, nothing else.`
-        : `Write a short, friendly Instagram DM reply to this message (1-2 sentences). Be natural and warm. Write only the reply.\n\nMessage: "${msg.lastMessage}"`;
-
-      const reply = await groqWithRetry(groqApiKey, prompt, 100);
-      sendResponse(reply ? { reply } : { error: "Groq unavailable" });
-    });
+    // Route through the Bibix backend's multi-provider AI (same as comment
+    // replies) using the user's DEFAULT provider from Settings → AI providers.
+    // The old path used a separate extension-local Groq key, so DMs silently
+    // fell back to random canned replies whenever that key wasn't set.
+    (async () => {
+      try {
+        const res = await bibixPost("/ai/dm-reply", {
+          conversation:   msg.context       || "",
+          last_message:   msg.lastMessage    || "",
+          my_profile:     msg.myProfile      || null,
+          their_username: msg.theirUsername  || null,
+        });
+        if (res && res.reply) sendResponse({ reply: res.reply });
+        else sendResponse({ error: res?.error || "AI provider returned empty reply" });
+      } catch (e) {
+        sendResponse({ error: e?.message || "AI request failed" });
+      }
+    })();
     return true;
   }
 

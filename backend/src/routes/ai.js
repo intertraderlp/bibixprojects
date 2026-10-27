@@ -258,6 +258,41 @@ router.post('/reply', authenticateFlexible, async (req, res) => {
   }
 });
 
+// ── Instagram DM reply ───────────────────────────────────────────────────────
+// Reads the recent conversation and writes the next reply as a real person,
+// using the user's default AI provider (same system as comment replies — NOT
+// the old extension-local Groq key). Goal: hold a normal, flowing DM chat.
+router.post('/dm-reply', authenticateFlexible, async (req, res) => {
+  const uid = req.user.id;
+  const { conversation, last_message, my_profile, their_username, tone } = req.body || {};
+  const convo = (typeof conversation === 'string' ? conversation : '').trim();
+  const last = (typeof last_message === 'string' ? last_message : '').trim();
+  if (!convo && !last) return res.status(400).json({ error: 'conversation or last_message required' });
+
+  const lines = [];
+  lines.push(`You are @${my_profile || 'me'}, a real person chatting in Instagram DMs${their_username ? ` with @${their_username}` : ''}.`);
+  lines.push('Continue the conversation naturally, the way a warm, genuine human texts — never like a bot or an assistant.');
+  if (tone) lines.push(`Tone: ${tone}.`);
+  if (convo) {
+    lines.push('Conversation so far (oldest first, most recent last; "Me" = you, "Them" = the other person):');
+    lines.push(convo.slice(0, 1800));
+  } else {
+    lines.push(`Their last message: "${last.slice(0, 400)}"`);
+  }
+  lines.push('Write ONLY your next reply. Rules: reply to what they actually said; 1–2 short sentences; same language as them; warm and real; do NOT greet again if the chat is already going; vary your wording (don\'t repeat earlier replies); no quotes, no preamble, no hashtags; at most one emoji.');
+  const prompt = lines.join('\n');
+
+  try {
+    const text = await generateReplyForUser(uid, prompt, { max_tokens: 140 });
+    const reply = (text || '').replace(/^["'\s]+|["'\s]+$/g, '').slice(0, 500);
+    if (!reply) return res.status(502).json({ error: 'Empty reply from provider' });
+    res.json({ reply });
+  } catch (e) {
+    const msg = e?.message || 'AI provider call failed';
+    res.status(/provider/i.test(msg) ? 400 : 502).json({ error: msg });
+  }
+});
+
 // Tiny helper exported for use by other routes (e.g., the action queue
 // dispatcher). Resolves the user's default-provider config + generates text
 // without an HTTP round-trip.

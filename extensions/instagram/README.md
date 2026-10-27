@@ -47,6 +47,15 @@ The card shows the new version from `manifest.json`. No re-installing.
 
 ## Changelog (recent)
 
+* **1.52.0** — DM auto-replies hold a real conversation: "Reply Unread DMs"
+  reads the recent thread (last ~14 messages) and generates the next reply via
+  your configured **default AI provider** (Settings → AI providers) — no more
+  separate Groq key / random canned fallbacks. Continues naturally in the other
+  person's language, doesn't re-greet, varies wording.
+* **1.51.0** — correct stop-reason + capture IG's real load-more control:
+  distinguish "Couldn't load more" (loader couldn't page past the first set)
+  from "Not enough comments" (loaded pages, then ran out); record the real
+  on-page control names so the loader selector can be fixed precisely.
 * **1.50.0** — gentle one-page-at-a-time loading (per request): like every
   comment on the current page one by one, then click the ⊕ once to load the
   next page, like those, and so on — no up-front multi-scroll. Clean stop-reason

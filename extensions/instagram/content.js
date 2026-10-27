@@ -2,7 +2,7 @@
 // response so we can ALWAYS confirm which build is actually running in a given
 // browser tab (folder/version confusion has repeatedly bitten us). Check it in
 // the IG tab's DevTools console: "content.js vX.Y.Z loaded".
-const BIBIX_EXT_VERSION = "1.51.0";
+const BIBIX_EXT_VERSION = "1.52.0";
 console.log(`✅ Instagram Extension content.js v${BIBIX_EXT_VERSION} loaded`);
 
 let STOP = false;
@@ -2061,7 +2061,7 @@ async function handleReplyDMs(count) {
     progress(`💬 @${targetUsername || "?"}: "${(messages.lastReceived || "…").slice(0, 40)}" — generating reply…`);
     await sleep(400);
 
-    const replyText = await getAIDMReply(messages);
+    const replyText = await getAIDMReply(messages, { myProfile: myUsername, theirUsername: targetUsername });
 
     if (!replyText) {
       progress(`⚠️ AI reply failed (check Groq API key) — skipping.`);
@@ -2401,7 +2401,7 @@ function getConversationMessages() {
   const lastDir      = deduped[deduped.length - 1].dir;
   const received     = deduped.filter(m => m.dir === "received");
   const lastReceived = received.length ? received[received.length - 1].text : null;
-  const context      = deduped.slice(-8).map(m => `${m.dir === "sent" ? "Me" : "Them"}: ${m.text}`);
+  const context      = deduped.slice(-14).map(m => `${m.dir === "sent" ? "Me" : "Them"}: ${m.text}`);
 
   return { lastReceived, lastDir, context };
 }
@@ -2537,19 +2537,27 @@ const DM_FALLBACK_REPLIES = [
   "Appreciate it! Will reply properly soon 😊",
 ];
 
-async function getAIDMReply(messages) {
+async function getAIDMReply(messages, opts = {}) {
   const context = messages.context.join("\n");
   const last = messages.lastReceived
     || (messages.context.length ? messages.context[messages.context.length - 1].replace(/^(Me|Them):\s*/, "") : "");
 
   return new Promise((resolve) => {
     chrome.runtime.sendMessage(
-      { action: "GET_AI_DM_REPLY", lastMessage: last, context },
+      {
+        action: "GET_AI_DM_REPLY",
+        lastMessage: last,
+        context,
+        myProfile:     opts.myProfile     || null,
+        theirUsername: opts.theirUsername  || null,
+      },
       (res) => {
         if (res?.reply) {
           resolve(res.reply);
         } else {
-          // Groq failed — use a random fallback reply so the conversation still gets answered
+          // Provider failed — fall back to a canned reply ONLY so the queue
+          // keeps moving; the backend path above is the real one.
+          console.warn('[BibixCS] DM AI reply failed:', res?.error);
           const fallback = DM_FALLBACK_REPLIES[Math.floor(Math.random() * DM_FALLBACK_REPLIES.length)];
           resolve(fallback);
         }
