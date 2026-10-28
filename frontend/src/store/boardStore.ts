@@ -51,15 +51,32 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   },
 
   updateItemValue: async (itemId, columnId, value) => {
-    const { data } = await api.put(`/items/${itemId}/values`, { column_id: columnId, value });
+    // Optimistic: flip the value in local state immediately so the UI reflects the
+    // change instantly, then persist in the background. Revert if the save fails.
+    const prevValues = get().board?.values;
     set(state => {
       if (!state.board) return state;
       const existing = state.board.values.findIndex(v => v.item_id === itemId && v.column_id === columnId);
       const newValues = [...state.board.values];
-      if (existing >= 0) newValues[existing] = data;
-      else newValues.push(data);
+      if (existing >= 0) newValues[existing] = { ...newValues[existing], value };
+      else newValues.push({ id: `tmp-${itemId}-${columnId}`, item_id: itemId, column_id: columnId, value } as typeof newValues[number]);
       return { board: { ...state.board, values: newValues } };
     });
+    try {
+      const { data } = await api.put(`/items/${itemId}/values`, { column_id: columnId, value });
+      // Reconcile with the server row (real id / updated_at).
+      set(state => {
+        if (!state.board) return state;
+        const existing = state.board.values.findIndex(v => v.item_id === itemId && v.column_id === columnId);
+        const newValues = [...state.board.values];
+        if (existing >= 0) newValues[existing] = data;
+        else newValues.push(data);
+        return { board: { ...state.board, values: newValues } };
+      });
+    } catch (e) {
+      if (prevValues) set(state => state.board ? { board: { ...state.board, values: prevValues } } : state);
+      throw e;
+    }
   },
 
   addItem: async (groupId, name, parentItemId) => {
