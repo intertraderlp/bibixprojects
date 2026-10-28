@@ -27,7 +27,7 @@ export default function AutomationsPanel({ onClose }: Props) {
   const [apiKey, setApiKey] = useState('');
   const [form, setForm] = useState({
     name: '', trigger_type: 'value_changed', action_type: 'notify',
-    column_id: '', to_value: '', provider: 'openai', action_config: '{}',
+    column_id: '', to_value: '', provider: 'openai', model: '', action_config: '{}',
   });
 
   const saveApiKey = async () => {
@@ -56,7 +56,7 @@ export default function AutomationsPanel({ onClose }: Props) {
         : {};
       let action_config: Record<string, unknown>;
       if (form.action_type === 'generate_messages') {
-        action_config = { provider: form.provider };
+        action_config = { provider: form.provider, ...(form.model.trim() ? { model: form.model.trim() } : {}) };
       } else {
         action_config = JSON.parse(form.action_config || '{}');
       }
@@ -175,6 +175,9 @@ export default function AutomationsPanel({ onClose }: Props) {
                   {(providers.length ? providers : [{ id: 'openai', display: 'OpenAI' }, { id: 'anthropic', display: 'Anthropic' }, { id: 'gemini', display: 'Gemini' }])
                     .map(p => <option key={p.id} value={p.id}>{p.display}</option>)}
                 </select>
+                <input value={form.model} onChange={e => setForm(f => ({ ...f, model: e.target.value }))}
+                  placeholder="Model (optional, e.g. gemini-2.0-flash) — leave blank for the default"
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm mt-2" />
                 <p className="text-xs text-gray-400 mt-1">
                   Writes a personalised LinkedIn message and intro email into the “Linkedin 1st Message”
                   and “Intro email” columns (created automatically).
