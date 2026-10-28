@@ -16,31 +16,59 @@ const TRIGGERS = [
 const ACTIONS = [
   { value: 'notify', label: 'Send a notification' },
   { value: 'set_value', label: 'Set a column value' },
+  { value: 'generate_messages', label: 'Generate LinkedIn + Email (AI)' },
 ];
 
 export default function AutomationsPanel({ onClose }: Props) {
   const { board } = useBoardStore();
   const [automations, setAutomations] = useState<Automation[]>([]);
   const [showNew, setShowNew] = useState(false);
-  const [form, setForm] = useState({ name: '', trigger_type: 'value_changed', action_type: 'notify', trigger_config: '{}', action_config: '{}' });
+  const [providers, setProviders] = useState<{ id: string; display: string }[]>([]);
+  const [apiKey, setApiKey] = useState('');
+  const [form, setForm] = useState({
+    name: '', trigger_type: 'value_changed', action_type: 'notify',
+    column_id: '', to_value: '', provider: 'openai', action_config: '{}',
+  });
+
+  const saveApiKey = async () => {
+    if (apiKey.trim().length < 8) { toast.error('Enter a valid API key'); return; }
+    try {
+      await api.post('/ai/providers', { provider: form.provider, api_key: apiKey.trim(), set_default: true });
+      setApiKey('');
+      toast.success(`${form.provider} key saved`);
+    } catch { toast.error('Could not save key'); }
+  };
 
   useEffect(() => {
     if (!board) return;
     api.get(`/automations/board/${board.id}`).then(r => setAutomations(r.data));
   }, [board?.id]);
 
+  useEffect(() => {
+    api.get('/ai/catalog').then(r => setProviders(r.data || [])).catch(() => {});
+  }, []);
+
   const create = async () => {
     if (!board) return;
     try {
+      const trigger_config = form.trigger_type === 'value_changed'
+        ? { ...(form.column_id ? { column_id: form.column_id } : {}), ...(form.to_value ? { to_value: form.to_value } : {}) }
+        : {};
+      let action_config: Record<string, unknown>;
+      if (form.action_type === 'generate_messages') {
+        action_config = { provider: form.provider };
+      } else {
+        action_config = JSON.parse(form.action_config || '{}');
+      }
       const { data } = await api.post('/automations', {
         board_id: board.id, name: form.name || 'New Automation',
-        trigger_type: form.trigger_type, trigger_config: JSON.parse(form.trigger_config || '{}'),
-        action_type: form.action_type, action_config: JSON.parse(form.action_config || '{}'),
+        trigger_type: form.trigger_type, trigger_config,
+        action_type: form.action_type, action_config,
       });
       setAutomations(a => [...a, data]);
       setShowNew(false);
       toast.success('Automation created');
-    } catch { toast.error('Invalid JSON in config'); }
+    } catch { toast.error('Could not create automation (check the config)'); }
   };
 
   const toggle = async (id: string, enabled: boolean) => {
@@ -120,18 +148,54 @@ export default function AutomationsPanel({ onClose }: Props) {
                 </select>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <label className="block text-xs text-gray-500 mb-1">Trigger Config (JSON)</label>
-                <textarea value={form.trigger_config} onChange={e => setForm(f => ({ ...f, trigger_config: e.target.value }))}
-                  rows={3} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs font-mono" />
+            {form.trigger_type === 'value_changed' && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">When this column…</label>
+                  <select value={form.column_id} onChange={e => setForm(f => ({ ...f, column_id: e.target.value }))}
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                    <option value="">Any column</option>
+                    {(board?.columns || []).map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-500 mb-1">…changes to this value</label>
+                  <input value={form.to_value} onChange={e => setForm(f => ({ ...f, to_value: e.target.value }))}
+                    placeholder="e.g. follow accepted Linkedin"
+                    className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                </div>
               </div>
+            )}
+
+            {form.action_type === 'generate_messages' ? (
+              <div>
+                <label className="block text-xs text-gray-500 mb-1">AI provider</label>
+                <select value={form.provider} onChange={e => setForm(f => ({ ...f, provider: e.target.value }))}
+                  className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm">
+                  {(providers.length ? providers : [{ id: 'openai', display: 'OpenAI' }, { id: 'anthropic', display: 'Anthropic' }, { id: 'gemini', display: 'Gemini' }])
+                    .map(p => <option key={p.id} value={p.id}>{p.display}</option>)}
+                </select>
+                <p className="text-xs text-gray-400 mt-1">
+                  Writes a personalised LinkedIn message and intro email into the “Linkedin 1st Message”
+                  and “Intro email” columns (created automatically).
+                </p>
+                <div className="mt-2 flex gap-2 items-end">
+                  <div className="flex-1">
+                    <label className="block text-xs text-gray-500 mb-1">{form.provider} API key (stored securely, once)</label>
+                    <input type="password" value={apiKey} onChange={e => setApiKey(e.target.value)}
+                      placeholder="Paste API key…" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
+                  </div>
+                  <button type="button" onClick={saveApiKey}
+                    className="px-3 py-2 text-sm border border-gray-300 rounded-lg hover:bg-gray-100">Save key</button>
+                </div>
+              </div>
+            ) : (
               <div>
                 <label className="block text-xs text-gray-500 mb-1">Action Config (JSON)</label>
                 <textarea value={form.action_config} onChange={e => setForm(f => ({ ...f, action_config: e.target.value }))}
                   rows={3} className="w-full border border-gray-300 rounded-lg px-3 py-2 text-xs font-mono" />
               </div>
-            </div>
+            )}
             <div className="flex gap-2 justify-end">
               <button onClick={() => setShowNew(false)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg">Cancel</button>
               <button onClick={create} className="px-4 py-2 text-sm bg-monday-blue text-white rounded-lg hover:bg-blue-600">Create</button>
