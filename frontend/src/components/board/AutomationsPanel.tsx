@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Plus, Trash2, ToggleLeft, ToggleRight, Zap } from 'lucide-react';
+import { Plus, Trash2, ToggleLeft, ToggleRight, Zap, Pencil } from 'lucide-react';
 import api from '../../api/client';
 import { useBoardStore } from '../../store/boardStore';
 import type { Automation } from '../../types';
@@ -25,10 +25,40 @@ export default function AutomationsPanel({ onClose }: Props) {
   const [showNew, setShowNew] = useState(false);
   const [providers, setProviders] = useState<{ id: string; display: string }[]>([]);
   const [apiKey, setApiKey] = useState('');
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState({
     name: '', trigger_type: 'value_changed', action_type: 'notify',
     column_id: '', to_value: '', provider: 'openai', model: '', action_config: '{}',
   });
+
+  const safeParse = (v: unknown): Record<string, unknown> => {
+    if (v && typeof v === 'object') return v as Record<string, unknown>;
+    try { return JSON.parse(String(v || '{}')); } catch { return {}; }
+  };
+
+  const openNew = () => {
+    setEditingId(null);
+    setForm({ name: '', trigger_type: 'value_changed', action_type: 'notify',
+      column_id: '', to_value: '', provider: 'openai', model: '', action_config: '{}' });
+    setShowNew(true);
+  };
+
+  const startEdit = (a: Automation) => {
+    const tc = safeParse(a.trigger_config);
+    const ac = safeParse(a.action_config);
+    setForm({
+      name: a.name || '',
+      trigger_type: a.trigger_type || 'value_changed',
+      action_type: a.action_type || 'notify',
+      column_id: String(tc.column_id || ''),
+      to_value: String(tc.to_value || ''),
+      provider: String(ac.provider || 'openai'),
+      model: String(ac.model || ''),
+      action_config: a.action_type === 'generate_messages' ? '{}' : JSON.stringify(ac),
+    });
+    setEditingId(a.id);
+    setShowNew(true);
+  };
 
   const saveApiKey = async () => {
     if (apiKey.trim().length < 8) { toast.error('Enter a valid API key'); return; }
@@ -48,7 +78,7 @@ export default function AutomationsPanel({ onClose }: Props) {
     api.get('/ai/catalog').then(r => setProviders(r.data || [])).catch(() => {});
   }, []);
 
-  const create = async () => {
+  const save = async () => {
     if (!board) return;
     try {
       const trigger_config = form.trigger_type === 'value_changed'
@@ -60,15 +90,23 @@ export default function AutomationsPanel({ onClose }: Props) {
       } else {
         action_config = JSON.parse(form.action_config || '{}');
       }
-      const { data } = await api.post('/automations', {
+      const payload = {
         board_id: board.id, name: form.name || 'New Automation',
         trigger_type: form.trigger_type, trigger_config,
         action_type: form.action_type, action_config,
-      });
-      setAutomations(a => [...a, data]);
+      };
+      if (editingId) {
+        const { data } = await api.put(`/automations/${editingId}`, payload);
+        setAutomations(a => a.map(x => x.id === editingId ? data : x));
+        toast.success('Automation updated');
+      } else {
+        const { data } = await api.post('/automations', payload);
+        setAutomations(a => [...a, data]);
+        toast.success('Automation created');
+      }
       setShowNew(false);
-      toast.success('Automation created');
-    } catch { toast.error('Could not create automation (check the config)'); }
+      setEditingId(null);
+    } catch { toast.error('Could not save automation (check the config)'); }
   };
 
   const toggle = async (id: string, enabled: boolean) => {
@@ -87,7 +125,7 @@ export default function AutomationsPanel({ onClose }: Props) {
       <div className="p-6">
         <div className="flex items-center justify-between mb-4">
           <p className="text-sm text-gray-500">Set up automated workflows for this board</p>
-          <button onClick={() => setShowNew(true)} className="flex items-center gap-2 px-3 py-2 bg-monday-blue text-white text-sm rounded-lg hover:bg-blue-600">
+          <button onClick={openNew} className="flex items-center gap-2 px-3 py-2 bg-monday-blue text-white text-sm rounded-lg hover:bg-blue-600">
             <Plus size={16} /> New Automation
           </button>
         </div>
@@ -118,6 +156,7 @@ export default function AutomationsPanel({ onClose }: Props) {
                   <button onClick={() => toggle(a.id, !!a.enabled)}>
                     {a.enabled ? <ToggleRight size={22} className="text-monday-blue" /> : <ToggleLeft size={22} className="text-gray-400" />}
                   </button>
+                  <button onClick={() => startEdit(a)} className="text-gray-400 hover:text-monday-blue p-1 rounded" title="Edit"><Pencil size={15} /></button>
                   <button onClick={() => remove(a.id)} className="text-gray-400 hover:text-red-500 p-1 rounded"><Trash2 size={15} /></button>
                 </div>
               </div>
@@ -128,7 +167,7 @@ export default function AutomationsPanel({ onClose }: Props) {
 
       {showNew && (
         <div className="border-t border-gray-200 p-6 bg-gray-50">
-          <h3 className="font-semibold text-sm mb-4">New Automation</h3>
+          <h3 className="font-semibold text-sm mb-4">{editingId ? 'Edit Automation' : 'New Automation'}</h3>
           <div className="space-y-3">
             <input value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))}
               placeholder="Automation name" className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm" />
@@ -200,8 +239,8 @@ export default function AutomationsPanel({ onClose }: Props) {
               </div>
             )}
             <div className="flex gap-2 justify-end">
-              <button onClick={() => setShowNew(false)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg">Cancel</button>
-              <button onClick={create} className="px-4 py-2 text-sm bg-monday-blue text-white rounded-lg hover:bg-blue-600">Create</button>
+              <button onClick={() => { setShowNew(false); setEditingId(null); }} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-200 rounded-lg">Cancel</button>
+              <button onClick={save} className="px-4 py-2 text-sm bg-monday-blue text-white rounded-lg hover:bg-blue-600">{editingId ? 'Save changes' : 'Create'}</button>
             </div>
           </div>
         </div>

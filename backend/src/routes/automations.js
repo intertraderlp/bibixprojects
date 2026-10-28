@@ -45,9 +45,14 @@ router.put('/:id', authenticate, (req, res) => {
   if (!automation) return res.status(404).json({ error: 'Automation not found' });
   if (!canAccessBoard(automation.board_id, req.user.id)) return res.status(403).json({ error: 'Access denied' });
 
-  const { name, enabled, trigger_config, action_config } = req.body;
-  db.prepare('UPDATE automations SET name = COALESCE(?, name), enabled = COALESCE(?, enabled), trigger_config = COALESCE(?, trigger_config), action_config = COALESCE(?, action_config) WHERE id = ?')
+  const { name, enabled, trigger_type, action_type, trigger_config, action_config } = req.body;
+  db.prepare(`UPDATE automations SET
+      name = COALESCE(?, name), enabled = COALESCE(?, enabled),
+      trigger_type = COALESCE(?, trigger_type), action_type = COALESCE(?, action_type),
+      trigger_config = COALESCE(?, trigger_config), action_config = COALESCE(?, action_config)
+    WHERE id = ?`)
     .run(name || null, enabled !== undefined ? (enabled ? 1 : 0) : null,
+      trigger_type || null, action_type || null,
       trigger_config ? JSON.stringify(trigger_config) : null,
       action_config ? JSON.stringify(action_config) : null,
       req.params.id);
