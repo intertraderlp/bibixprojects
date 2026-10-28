@@ -596,7 +596,10 @@ export default function InstagramPage() {
       setAiTestStatus({ kind: 'ok', msg: `Saved. Test reply: "${(testRes.data?.sample || '').slice(0, 60)}"` });
       await loadAiProviders(); await loadAiHasKey();
     } catch (e: unknown) {
-      setAiTestStatus({ kind: 'err', msg: e instanceof Error ? e.message : String(e) });
+      // Surface the backend's real reason (e.g. the provider's error text),
+      // not just axios's generic "Request failed with status code 502".
+      const err = e as { response?: { data?: { error?: string } }; message?: string };
+      setAiTestStatus({ kind: 'err', msg: err.response?.data?.error || err.message || String(e) });
     } finally { setAiKeyBusy(false); }
   }
   async function removeAiProvider(provider: string) {

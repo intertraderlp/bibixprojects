@@ -22,7 +22,10 @@ const PROVIDERS = {
   groq: {
     display: 'Groq',
     base_url: 'https://api.groq.com/openai/v1',
-    default_model: 'llama-3.3-70b-versatile',
+    // llama-3.3-70b-versatile was decommissioned 2026-08-16; openai/gpt-oss-120b
+    // is Groq's recommended replacement (a reasoning model — see the
+    // reasoning-aware max_tokens bump in callOpenAICompat).
+    default_model: 'openai/gpt-oss-120b',
     style: 'openai',
     docs_url: 'https://console.groq.com/keys',
     free_tier: true,
@@ -111,6 +114,12 @@ function getProviderConfig(id) {
 // ── OpenAI-compatible chat completions ──────────────────────────────────────
 // Used for: openai, groq, grok, perplexity, z_ai, mistral, deepseek.
 async function callOpenAICompat(baseUrl, apiKey, model, prompt, maxTokens) {
+  // Reasoning models (gpt-oss, o1/o3, qwen3, deepseek-r) spend part of the
+  // token budget on hidden reasoning that counts toward max_tokens — a small
+  // cap leaves no room for the actual answer and returns empty. Give them
+  // headroom; non-reasoning models still stop early so this costs nothing.
+  const isReasoning = /gpt-oss|(^|[^a-z])o[13]([^a-z]|$)|qwen3|deepseek-r|reason/i.test(model || '');
+  const effMax = isReasoning ? Math.max(maxTokens || 250, 1024) : (maxTokens || 250);
   const r = await fetchFn(`${baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -119,7 +128,7 @@ async function callOpenAICompat(baseUrl, apiKey, model, prompt, maxTokens) {
     },
     body: JSON.stringify({
       model,
-      max_tokens: maxTokens || 250,
+      max_tokens: effMax,
       messages: [{ role: 'user', content: prompt }],
     }),
   });
