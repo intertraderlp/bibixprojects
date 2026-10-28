@@ -22,7 +22,7 @@ const PROVIDERS = {
   groq: {
     display: 'Groq',
     base_url: 'https://api.groq.com/openai/v1',
-    default_model: 'llama-3.3-70b-versatile',
+    default_model: 'openai/gpt-oss-120b',
     style: 'openai',
     docs_url: 'https://console.groq.com/keys',
     free_tier: true,
