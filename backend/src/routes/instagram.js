@@ -199,6 +199,39 @@ try {
     CREATE INDEX IF NOT EXISTS idx_ig_automations_due
       ON instagram_automations(enabled, next_run_at);
 
+    -- ─── DM bot: per-account conversation config + media library ─────────────
+    -- One config row per (user, my_profile). my_profile '__default__' is the
+    -- fallback used when a specific account has no config yet.
+    CREATE TABLE IF NOT EXISTS instagram_dm_bot_configs (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      my_profile TEXT NOT NULL DEFAULT '__default__',
+      enabled INTEGER NOT NULL DEFAULT 1,
+      tone TEXT DEFAULT 'friendly',
+      instructions TEXT,
+      goal_link TEXT,
+      goal_note TEXT,
+      media_mode TEXT DEFAULT 'auto',       -- off | auto (let the AI decide when)
+      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE(user_id, my_profile)
+    );
+    -- Images/videos the bot may send mid-conversation. when_to_send is a
+    -- free-text rule the AI reads to decide if now is the right moment.
+    CREATE TABLE IF NOT EXISTS instagram_dm_bot_media (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      my_profile TEXT NOT NULL DEFAULT '__default__',
+      kind TEXT,                            -- image | video
+      filename TEXT NOT NULL,
+      mime TEXT,
+      size INTEGER,
+      caption TEXT,
+      when_to_send TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE INDEX IF NOT EXISTS idx_ig_dm_media_user_profile
+      ON instagram_dm_bot_media(user_id, my_profile);
+
     -- ─── Per-username profile enrichment ────────────────────────────────────
     -- The "About this account" panel on IG profiles exposes Date Joined +
     -- Account Based In (country). We capture it asynchronously after batches
@@ -3583,6 +3616,105 @@ router.get('/server-time', authenticateFlexible, (req, res) => {
     server_time: now.toISOString(),
     server_tz_offset_minutes: now.getTimezoneOffset(),
   });
+});
+
+// ── DM bot: per-account config + media library ───────────────────────────────
+const DM_PROFILE = (q) => {
+  const p = (q.my_profile || q.myProfile || '').toString().trim().replace(/^@/, '').toLowerCase();
+  return p || '__default__';
+};
+const DM_CONFIG_DEFAULTS = { enabled: 1, tone: 'friendly', instructions: '', goal_link: '', goal_note: '', media_mode: 'auto' };
+
+// Read a config for an account, falling back to the account's own row, then the
+// '__default__' row, then built-in defaults.
+function loadDmConfig(uid, profile) {
+  const row = db.prepare('SELECT * FROM instagram_dm_bot_configs WHERE user_id = ? AND my_profile = ?').get(uid, profile)
+    || (profile !== '__default__' ? db.prepare("SELECT * FROM instagram_dm_bot_configs WHERE user_id = ? AND my_profile = '__default__'").get(uid) : null);
+  return { my_profile: profile, ...DM_CONFIG_DEFAULTS, ...(row || {}) };
+}
+function loadDmMedia(uid, profile) {
+  const rows = db.prepare(`
+    SELECT * FROM instagram_dm_bot_media WHERE user_id = ? AND my_profile IN (?, '__default__') ORDER BY created_at DESC
+  `).all(uid, profile);
+  return rows;
+}
+router.loadDmConfig = loadDmConfig;
+router.loadDmMedia = loadDmMedia;
+
+router.get('/dm-bot/config', authenticateFlexible, (req, res) => {
+  const uid = targetUser(req);
+  const profile = DM_PROFILE(req.query);
+  res.json({
+    config: loadDmConfig(uid, profile),
+    media: loadDmMedia(uid, profile).map(m => ({
+      id: m.id, my_profile: m.my_profile, kind: m.kind, caption: m.caption,
+      when_to_send: m.when_to_send, size: m.size,
+      url: `/api/instagram/dm-bot/media/${m.id}/file`,
+    })),
+    profiles: db.prepare('SELECT DISTINCT my_profile FROM instagram_actions WHERE user_id = ? AND my_profile IS NOT NULL ORDER BY my_profile').all(uid).map(r => r.my_profile),
+  });
+});
+
+router.put('/dm-bot/config', authenticateFlexible, (req, res) => {
+  const uid = targetUser(req);
+  const b = req.body || {};
+  const profile = DM_PROFILE(b);
+  const cur = db.prepare('SELECT id FROM instagram_dm_bot_configs WHERE user_id = ? AND my_profile = ?').get(uid, profile);
+  const vals = {
+    enabled: b.enabled === false || b.enabled === 0 ? 0 : 1,
+    tone: (b.tone || 'friendly').toString().slice(0, 40),
+    instructions: (b.instructions || '').toString().slice(0, 4000),
+    goal_link: (b.goal_link || '').toString().slice(0, 500),
+    goal_note: (b.goal_note || '').toString().slice(0, 1000),
+    media_mode: b.media_mode === 'off' ? 'off' : 'auto',
+  };
+  if (cur) {
+    db.prepare(`UPDATE instagram_dm_bot_configs SET enabled=?, tone=?, instructions=?, goal_link=?, goal_note=?, media_mode=?, updated_at=CURRENT_TIMESTAMP WHERE id=?`)
+      .run(vals.enabled, vals.tone, vals.instructions, vals.goal_link, vals.goal_note, vals.media_mode, cur.id);
+  } else {
+    db.prepare(`INSERT INTO instagram_dm_bot_configs (id, user_id, my_profile, enabled, tone, instructions, goal_link, goal_note, media_mode) VALUES (?,?,?,?,?,?,?,?,?)`)
+      .run(uuidv4(), uid, profile, vals.enabled, vals.tone, vals.instructions, vals.goal_link, vals.goal_note, vals.media_mode);
+  }
+  res.json({ ok: true, config: loadDmConfig(uid, profile) });
+});
+
+router.post('/dm-bot/media', authenticateFlexible, igUpload.single('media'), (req, res) => {
+  const uid = req.user.id;
+  const b = req.body || {};
+  if (!req.file) return res.status(400).json({ error: 'media file required' });
+  const profile = DM_PROFILE(b);
+  const kind = (req.file.mimetype || '').startsWith('video') ? 'video' : 'image';
+  const id = uuidv4();
+  db.prepare(`INSERT INTO instagram_dm_bot_media (id, user_id, my_profile, kind, filename, mime, size, caption, when_to_send) VALUES (?,?,?,?,?,?,?,?,?)`)
+    .run(id, uid, profile, kind, req.file.filename, req.file.mimetype, req.file.size, (b.caption || '').slice(0, 300), (b.when_to_send || '').slice(0, 500));
+  res.json({ ok: true, id });
+});
+
+router.patch('/dm-bot/media/:id', authenticateFlexible, (req, res) => {
+  const uid = req.user.id;
+  const b = req.body || {};
+  const r = db.prepare('UPDATE instagram_dm_bot_media SET caption = COALESCE(?, caption), when_to_send = COALESCE(?, when_to_send) WHERE id = ? AND user_id = ?')
+    .run(b.caption != null ? String(b.caption).slice(0, 300) : null, b.when_to_send != null ? String(b.when_to_send).slice(0, 500) : null, req.params.id, uid);
+  res.json({ ok: true, changed: r.changes });
+});
+
+router.delete('/dm-bot/media/:id', authenticateFlexible, (req, res) => {
+  const uid = req.user.id;
+  const row = db.prepare('SELECT filename FROM instagram_dm_bot_media WHERE id = ? AND user_id = ?').get(req.params.id, uid);
+  if (row) { try { fs.unlinkSync(path.join(IG_UPLOADS_DIR, row.filename)); } catch (_) {} }
+  const r = db.prepare('DELETE FROM instagram_dm_bot_media WHERE id = ? AND user_id = ?').run(req.params.id, uid);
+  res.json({ ok: true, deleted: r.changes });
+});
+
+// Serve a media file (the extension fetches this to attach in the DM).
+router.get('/dm-bot/media/:id/file', authenticateFlexible, (req, res) => {
+  const uid = targetUser(req);
+  const row = db.prepare('SELECT * FROM instagram_dm_bot_media WHERE id = ? AND user_id = ?').get(req.params.id, uid);
+  if (!row) return res.status(404).json({ error: 'Not found' });
+  const fp = path.join(IG_UPLOADS_DIR, row.filename);
+  if (!fs.existsSync(fp)) return res.status(404).json({ error: 'File missing' });
+  res.setHeader('Content-Type', row.mime || 'application/octet-stream');
+  res.sendFile(fp);
 });
 
 module.exports = router;

@@ -1180,6 +1180,20 @@ async function getBibixConfig() {
   });
 }
 
+// Fetch a DM-bot media file (binary) from Bibix with auth, return it as a
+// data: URL the content script can turn back into a File to attach in the DM.
+async function fetchDmMedia(relUrl) {
+  const { bibixToken, bibixStagingToken, bibixStagingEnabled } = await getBibixConfig();
+  const useStaging = !!bibixStagingEnabled && !!bibixStagingToken;
+  const base  = useStaging ? BIBIX_STAGING : BIBIX_PROD;
+  const token = useStaging ? bibixStagingToken : bibixToken;
+  const resp = await fetch(`${base}${relUrl}`, { headers: { Authorization: `Bearer ${token}` } });
+  if (!resp.ok) throw new Error(`media fetch ${resp.status}`);
+  const blob = await resp.blob();
+  const dataUrl = await new Promise((r, j) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.onerror = j; fr.readAsDataURL(blob); });
+  return { dataUrl, mime: blob.type };
+}
+
 // Fire a single request to one server
 async function bibixRequestTo(baseUrl, token, method, path, body) {
   if (!token) { console.log(`[BibixBG] ${method} ${baseUrl}${path} — SKIPPED (no token)`); return null; }
@@ -1376,11 +1390,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           my_profile:     msg.myProfile      || null,
           their_username: msg.theirUsername  || null,
         });
-        if (res && res.reply) sendResponse({ reply: res.reply });
+        if (res && (res.reply || res.media_id)) sendResponse({ reply: res.reply || "", media_url: res.media_url || null });
         else sendResponse({ error: res?.error || "AI provider returned empty reply" });
       } catch (e) {
         sendResponse({ error: e?.message || "AI request failed" });
       }
+    })();
+    return true;
+  }
+
+  if (msg.action === "GET_DM_MEDIA") {
+    (async () => {
+      try { sendResponse(await fetchDmMedia(msg.url)); }
+      catch (e) { sendResponse({ error: e?.message || "media fetch failed" }); }
     })();
     return true;
   }

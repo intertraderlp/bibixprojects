@@ -262,31 +262,60 @@ router.post('/reply', authenticateFlexible, async (req, res) => {
 // Reads the recent conversation and writes the next reply as a real person,
 // using the user's default AI provider (same system as comment replies — NOT
 // the old extension-local Groq key). Goal: hold a normal, flowing DM chat.
+const TONE_GUIDE = {
+  friendly:     'warm, friendly and upbeat',
+  flirty:       'playful and flirty, a little teasing, but tasteful',
+  professional: 'polite, professional and concise',
+  casual:       'super casual and chill, like texting a friend',
+};
 router.post('/dm-reply', authenticateFlexible, async (req, res) => {
   const uid = req.user.id;
-  const { conversation, last_message, my_profile, their_username, tone } = req.body || {};
+  const { conversation, last_message, my_profile, their_username } = req.body || {};
   const convo = (typeof conversation === 'string' ? conversation : '').trim();
   const last = (typeof last_message === 'string' ? last_message : '').trim();
   if (!convo && !last) return res.status(400).json({ error: 'conversation or last_message required' });
 
+  // Per-account bot config + media library (set in Monday → Instagram → DM Bot).
+  const profile = (my_profile || '').toString().trim().replace(/^@/, '').toLowerCase() || '__default__';
+  let cfg = null, media = [];
+  try {
+    cfg = db.prepare('SELECT * FROM instagram_dm_bot_configs WHERE user_id = ? AND my_profile = ?').get(uid, profile)
+      || (profile !== '__default__' ? db.prepare("SELECT * FROM instagram_dm_bot_configs WHERE user_id = ? AND my_profile = '__default__'").get(uid) : null);
+    media = db.prepare("SELECT id, kind, caption, when_to_send FROM instagram_dm_bot_media WHERE user_id = ? AND my_profile IN (?, '__default__')").all(uid, profile);
+  } catch (_) { /* tables may not exist on very old DBs */ }
+
+  const toneKey = (cfg && cfg.tone) || req.body.tone || 'friendly';
+  const toneDesc = TONE_GUIDE[toneKey] || `${toneKey}`;
+  const canSendMedia = media.length > 0 && (!cfg || cfg.media_mode !== 'off');
+
   const lines = [];
   lines.push(`You are @${my_profile || 'me'}, a real person chatting in Instagram DMs${their_username ? ` with @${their_username}` : ''}.`);
-  lines.push('Continue the conversation naturally, the way a warm, genuine human texts — never like a bot or an assistant.');
-  if (tone) lines.push(`Tone: ${tone}.`);
+  lines.push(`Continue the conversation naturally, the way a ${toneDesc} human texts — never like a bot or an assistant.`);
+  if (cfg && cfg.instructions) { lines.push('Follow these instructions about how to chat and what to aim for:'); lines.push(String(cfg.instructions).slice(0, 2000)); }
+  if (cfg && cfg.goal_link) { lines.push(`When it feels natural (not too early, not pushy), guide them toward this link: ${cfg.goal_link}${cfg.goal_note ? ` — ${String(cfg.goal_note).slice(0, 300)}` : ''}`); }
+  if (canSendMedia) {
+    lines.push('You can also send ONE of these photos/videos if the moment fits (e.g. they ask for a pic, or your instructions say to). To send one, put a tag [[SEND_MEDIA:<id>]] at the very end of your reply, after the text. Only send when it genuinely fits; otherwise send none. Available media:');
+    for (const m of media) lines.push(`- id=${m.id} (${m.kind}${m.caption ? `, "${String(m.caption).slice(0,60)}"` : ''})${m.when_to_send ? ` — send when: ${String(m.when_to_send).slice(0,120)}` : ''}`);
+  }
   if (convo) {
     lines.push('Conversation so far (oldest first, most recent last; "Me" = you, "Them" = the other person):');
     lines.push(convo.slice(0, 1800));
   } else {
     lines.push(`Their last message: "${last.slice(0, 400)}"`);
   }
-  lines.push('Write ONLY your next reply. Rules: reply to what they actually said; 1–2 short sentences; same language as them; warm and real; do NOT greet again if the chat is already going; vary your wording (don\'t repeat earlier replies); no quotes, no preamble, no hashtags; at most one emoji.');
+  lines.push('Write ONLY your next reply. Rules: reply to what they actually said; 1–2 short sentences; same language as them; stay in character; do NOT greet again if the chat is already going; vary your wording (don\'t repeat earlier replies); no quotes, no preamble, no hashtags; at most one emoji.' + (canSendMedia ? ' If and only if sending media fits, append [[SEND_MEDIA:<id>]] at the end.' : ''));
   const prompt = lines.join('\n');
 
   try {
-    const text = await generateReplyForUser(uid, prompt, { max_tokens: 140 });
-    const reply = (text || '').replace(/^["'\s]+|["'\s]+$/g, '').slice(0, 500);
-    if (!reply) return res.status(502).json({ error: 'Empty reply from provider' });
-    res.json({ reply });
+    const text = await generateReplyForUser(uid, prompt, { max_tokens: 160 });
+    let reply = (text || '').trim();
+    // Pull out an optional [[SEND_MEDIA:id]] tag the model may have appended.
+    let mediaId = null;
+    const tag = /\[\[\s*SEND_MEDIA\s*:\s*([A-Za-z0-9_-]+)\s*\]\]/i.exec(reply);
+    if (tag && canSendMedia && media.some(m => m.id === tag[1])) mediaId = tag[1];
+    reply = reply.replace(/\[\[\s*SEND_MEDIA\s*:[^\]]*\]\]/ig, '').replace(/^["'\s]+|["'\s]+$/g, '').slice(0, 500);
+    if (!reply && !mediaId) return res.status(502).json({ error: 'Empty reply from provider' });
+    res.json({ reply, media_id: mediaId, media_url: mediaId ? `/api/instagram/dm-bot/media/${mediaId}/file` : null });
   } catch (e) {
     const msg = e?.message || 'AI provider call failed';
     res.status(/provider/i.test(msg) ? 400 : 502).json({ error: msg });

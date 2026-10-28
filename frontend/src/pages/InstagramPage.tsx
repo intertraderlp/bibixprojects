@@ -3,8 +3,9 @@ import { BarChart2, Clock, Zap, Users, Instagram, ChevronDown, Download, Calenda
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
 import PostReturnsDashboard from './instagram/PostReturnsDashboard';
+import DmBotSettings from './instagram/DmBotSettings';
 
-type Tab = 'dashboard' | 'history' | 'campaigns' | 'schedule' | 'followers' | 'accounts' | 'research' | 'automations' | 'health';
+type Tab = 'dashboard' | 'history' | 'campaigns' | 'schedule' | 'followers' | 'accounts' | 'research' | 'automations' | 'dmbot' | 'health';
 
 interface Automation {
   id: string;
@@ -1347,6 +1348,7 @@ export default function InstagramPage() {
     { id: 'accounts'  as Tab, label: 'Accounts',  icon: <Contact size={15} /> },
     { id: 'research'  as Tab, label: 'Research',  icon: <Search size={15} /> },
     { id: 'automations' as Tab, label: 'Automations', icon: <RefreshCw size={15} /> },
+    { id: 'dmbot'     as Tab, label: 'DM Bot',    icon: <RefreshCw size={15} /> },
     { id: 'health'    as Tab, label: 'Health',    icon: <Zap size={15} /> },
   ];
 
@@ -2573,6 +2575,8 @@ export default function InstagramPage() {
         )}
 
         {/* ══════════════════════════════ HEALTH ══════════════════════════════ */}
+        {tab === 'dmbot' && <DmBotSettings asUser={asUser} />}
+
         {tab === 'health' && (
           <div className="space-y-4 max-w-6xl">
             <div className="bg-white rounded-xl border border-gray-200 p-5">

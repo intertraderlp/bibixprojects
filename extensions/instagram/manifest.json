@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Instagram Extension",
-  "version": "1.52.0",
+  "version": "1.53.0",
   "description": "Engagement, daily follower counts, post scheduling, profile research, scheduled action campaigns, and downloader for Instagram — synced to Bibix.",
   "action": {
     "default_popup": "popup.html",

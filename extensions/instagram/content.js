@@ -2,7 +2,7 @@
 // response so we can ALWAYS confirm which build is actually running in a given
 // browser tab (folder/version confusion has repeatedly bitten us). Check it in
 // the IG tab's DevTools console: "content.js vX.Y.Z loaded".
-const BIBIX_EXT_VERSION = "1.52.0";
+const BIBIX_EXT_VERSION = "1.53.0";
 console.log(`✅ Instagram Extension content.js v${BIBIX_EXT_VERSION} loaded`);
 
 let STOP = false;
@@ -2061,20 +2061,33 @@ async function handleReplyDMs(count) {
     progress(`💬 @${targetUsername || "?"}: "${(messages.lastReceived || "…").slice(0, 40)}" — generating reply…`);
     await sleep(400);
 
-    const replyText = await getAIDMReply(messages, { myProfile: myUsername, theirUsername: targetUsername });
+    const ai = await getAIDMReply(messages, { myProfile: myUsername, theirUsername: targetUsername });
+    const replyText = ai.reply;
 
-    if (!replyText) {
-      progress(`⚠️ AI reply failed (check Groq API key) — skipping.`);
+    if (!replyText && !ai.mediaUrl) {
+      progress(`⚠️ AI reply failed (set a default provider in Settings → AI providers) — skipping.`);
       await sleep(1000);
       continue;
     }
 
-    progress(`✍️ Typing: "${replyText.slice(0, 50)}"`);
-    await sleep(400);
+    let sent = false;
+    if (replyText) {
+      progress(`✍️ Typing: "${replyText.slice(0, 50)}"`);
+      await sleep(400);
+      sent = await typeAndSendDM(replyText);
+    }
 
-    const sent = await typeAndSendDM(replyText);
+    // If the bot chose to send a photo/video, attach + send it after the text.
+    if (ai.mediaUrl) {
+      progress(`📎 @${targetUsername || "?"}: sending media…`);
+      try {
+        const file = await fetchDmMediaFile(ai.mediaUrl);
+        if (file) { const okMedia = await sendDMMedia(file); sent = sent || okMedia; }
+      } catch (e) { console.warn('[BibixCS] DM media send error', e); }
+    }
+
     if (!sent) {
-      progress(`⚠️ Couldn't find message input — skipping.`);
+      progress(`⚠️ Couldn't send the reply — skipping.`);
       await sleep(1000);
       continue;
     }
@@ -2552,18 +2565,52 @@ async function getAIDMReply(messages, opts = {}) {
         theirUsername: opts.theirUsername  || null,
       },
       (res) => {
-        if (res?.reply) {
-          resolve(res.reply);
+        if (res?.reply || res?.media_url) {
+          resolve({ reply: res.reply || "", mediaUrl: res.media_url || null, fromAI: true });
         } else {
           // Provider failed — fall back to a canned reply ONLY so the queue
           // keeps moving; the backend path above is the real one.
           console.warn('[BibixCS] DM AI reply failed:', res?.error);
           const fallback = DM_FALLBACK_REPLIES[Math.floor(Math.random() * DM_FALLBACK_REPLIES.length)];
-          resolve(fallback);
+          resolve({ reply: fallback, mediaUrl: null, fromAI: false });
         }
       }
     );
   });
+}
+
+// Attach + send a media File in the open DM thread. Uses IG's hidden
+// <input type=file> (the photo/media button), sets the file via DataTransfer,
+// waits for the preview, then clicks Send. Best-effort — logs and returns
+// false if IG's composer doesn't accept it, so the text reply still stands.
+async function sendDMMedia(file) {
+  const inputs = Array.from(document.querySelectorAll('input[type="file"]'));
+  const input = inputs.find(i => /image|video/.test(i.getAttribute('accept') || '')) || inputs[inputs.length - 1];
+  if (!input) { console.warn('[BibixCS] DM media: no file input found'); return false; }
+  try {
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    input.files = dt.files;
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  } catch (e) { console.warn('[BibixCS] DM media attach failed', e); return false; }
+
+  // Wait for the upload preview, then find + click Send.
+  const sendBtn = await waitFor(() =>
+    document.querySelector('[aria-label="Send"]') ||
+    Array.from(document.querySelectorAll('[role="button"], button')).find(el =>
+      ((el.getAttribute('aria-label') || el.innerText || '').trim().toLowerCase() === 'send')),
+  8000);
+  if (sendBtn) { sendBtn.click(); await sleep(1800); return true; }
+  console.warn('[BibixCS] DM media: Send button not found after attach');
+  return false;
+}
+
+async function fetchDmMediaFile(mediaUrl) {
+  const res = await new Promise((r) => chrome.runtime.sendMessage({ action: 'GET_DM_MEDIA', url: mediaUrl }, r));
+  if (!res || !res.dataUrl) { console.warn('[BibixCS] DM media fetch failed:', res?.error); return null; }
+  const blob = await (await fetch(res.dataUrl)).blob();
+  const ext = (res.mime || '').startsWith('video') ? 'mp4' : 'jpg';
+  return new File([blob], `media.${ext}`, { type: res.mime || 'image/jpeg' });
 }
 
 /* ===== CAMPAIGN HELPERS ===== */
