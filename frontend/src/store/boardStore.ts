@@ -2,6 +2,25 @@ import { create } from 'zustand';
 import api from '../api/client';
 import type { BoardData, Column, Group, Item, ItemValue, ColumnType } from '../types';
 
+// ── Value lookup caches ───────────────────────────────────────────────────────
+// getValue/getItemValues are called once PER CELL during render. A linear scan of
+// the values array (O(N)) made board render O(N^2) — minutes of freeze at 560 rows.
+// Build O(1)/O(1)-amortised maps once, rebuilt only when the values array changes.
+let _valuesRef: ItemValue[] | null = null;
+let _valueMap = new Map<string, string | null>();
+let _itemValuesMap = new Map<string, ItemValue[]>();
+function _ensureMaps(vals: ItemValue[]) {
+  if (vals === _valuesRef) return;
+  _valuesRef = vals;
+  _valueMap = new Map();
+  _itemValuesMap = new Map();
+  for (const v of vals) {
+    _valueMap.set(v.item_id + '\u0000' + v.column_id, v.value);
+    const arr = _itemValuesMap.get(v.item_id);
+    if (arr) arr.push(v); else _itemValuesMap.set(v.item_id, [v]);
+  }
+}
+
 interface BoardState {
   board: BoardData | null;
   loading: boolean;
@@ -225,7 +244,17 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     set(state => state.board ? { board: { ...state.board, ...data } } : state);
   },
 
-  getItemValues: (itemId) => get().board?.values.filter(v => v.item_id === itemId) ?? [],
+  getItemValues: (itemId) => {
+    const vals = get().board?.values;
+    if (!vals) return [];
+    _ensureMaps(vals);
+    return _itemValuesMap.get(itemId) ?? [];
+  },
 
-  getValue: (itemId, columnId) => get().board?.values.find(v => v.item_id === itemId && v.column_id === columnId)?.value ?? null,
+  getValue: (itemId, columnId) => {
+    const vals = get().board?.values;
+    if (!vals) return null;
+    _ensureMaps(vals);
+    return _valueMap.get(itemId + '\u0000' + columnId) ?? null;
+  },
 }));
