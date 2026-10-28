@@ -272,6 +272,8 @@ export default function TableView() {
   const [showFilters, setShowFilters] = useState<Record<string, boolean>>({});
   const [groupFilters, setGroupFilters] = useState<Record<string, { name: string; cols: Record<string, string> }>>({});
   const [sortConfig, setSortConfig] = useState<{ colId: string; dir: 'asc' | 'desc' } | null>(null);
+  const [pageByGroup, setPageByGroup] = useState<Record<string, number>>({});
+  const PAGE_SIZE = 100;
 
   // Active drag
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -511,6 +513,11 @@ export default function TableView() {
             {sortedGroups.map(group => {
               const groupItems = topItems(group.id);
               const collapsed = group.collapsed === 1;
+              const filteredItems = groupItems.filter(item => applyGroupFilter(group.id, item));
+              const pageCount = Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE));
+              const page = Math.min(pageByGroup[group.id] || 0, pageCount - 1);
+              const pagedItems = filteredItems.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+              const setPage = (p: number) => setPageByGroup(s => ({ ...s, [group.id]: Math.max(0, Math.min(p, pageCount - 1)) }));
 
               return (
                 <div key={group.id} className="mb-6">
@@ -598,8 +605,8 @@ export default function TableView() {
                       )}
 
                       {/* Items */}
-                      <SortableContext items={groupItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
-                        {groupItems.filter(item => applyGroupFilter(group.id, item)).map(item => {
+                      <SortableContext items={pagedItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
+                        {pagedItems.map(item => {
                           const subs = subtasksOf(item.id);
                           const isExpanded = !!expandedItems[item.id];
                           return (
@@ -653,6 +660,26 @@ export default function TableView() {
                           );
                         })}
                       </SortableContext>
+
+                      {/* Pagination — render 100 rows at a time so big groups stay fast */}
+                      {pageCount > 1 && (
+                        <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100 bg-gray-50/60 text-xs text-gray-600">
+                          <span>
+                            Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filteredItems.length)} of {filteredItems.length}
+                          </span>
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => setPage(0)} disabled={page === 0}
+                              className="px-2 py-1 rounded hover:bg-gray-200 disabled:opacity-40">« First</button>
+                            <button onClick={() => setPage(page - 1)} disabled={page === 0}
+                              className="px-2 py-1 rounded hover:bg-gray-200 disabled:opacity-40">‹ Prev</button>
+                            <span className="px-2">Page {page + 1} / {pageCount}</span>
+                            <button onClick={() => setPage(page + 1)} disabled={page >= pageCount - 1}
+                              className="px-2 py-1 rounded hover:bg-gray-200 disabled:opacity-40">Next ›</button>
+                            <button onClick={() => setPage(pageCount - 1)} disabled={page >= pageCount - 1}
+                              className="px-2 py-1 rounded hover:bg-gray-200 disabled:opacity-40">Last »</button>
+                          </div>
+                        </div>
+                      )}
 
                       {/* Add item row */}
                       {newItemGroup === group.id ? (

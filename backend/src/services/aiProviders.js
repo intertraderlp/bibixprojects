@@ -46,7 +46,7 @@ const PROVIDERS = {
   gemini: {
     display: 'Google Gemini',
     base_url: 'https://generativelanguage.googleapis.com/v1beta',
-    default_model: 'gemini-2.0-flash',
+    default_model: 'gemini-3.8-flash',
     style: 'gemini',
     docs_url: 'https://aistudio.google.com/app/apikey',
     free_tier: true,
