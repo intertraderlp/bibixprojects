@@ -205,6 +205,93 @@ RULES:
 - Output ONLY the email (the "Subject:" line followed by the body).`;
 }
 
+// ── Unicode styling ───────────────────────────────────────────────────────────
+// LinkedIn / plain text have no rich formatting, so emphasis is rendered with
+// styled unicode characters. The model emits **bold** / *italic* markers and we
+// convert them here, so the styling is guaranteed regardless of the model.
+function toBold(s) {
+  return s.replace(/[A-Za-z0-9]/g, c => {
+    const n = c.charCodeAt(0);
+    if (n >= 65 && n <= 90) return String.fromCodePoint(0x1D5D4 + n - 65);
+    if (n >= 97 && n <= 122) return String.fromCodePoint(0x1D5EE + n - 97);
+    return String.fromCodePoint(0x1D7EC + n - 48);
+  });
+}
+function toItalic(s) {
+  return s.replace(/[A-Za-z]/g, c => {
+    const n = c.charCodeAt(0);
+    if (n >= 65 && n <= 90) return String.fromCodePoint(0x1D608 + n - 65);
+    return String.fromCodePoint(0x1D622 + n - 97);
+  });
+}
+function applyStyle(text) {
+  return String(text || '')
+    .replace(/\*\*([^*]+?)\*\*/g, (_, m) => toBold(m))
+    .replace(/\*([^*]+?)\*/g, (_, m) => toItalic(m));
+}
+
+// These supersede the earlier builders (last function declaration wins): they use
+// **/* markers (converted above) and follow the user's template faithfully.
+function buildLinkedInPrompt(d) {
+  const loc = [d.address, d.country].filter(Boolean).join(', ') || 'their area';
+  return `You write ONE short LinkedIn first-message for an agency that helps companies get recommended by AI assistants (ChatGPT, Perplexity, Gemini) — "Generative Engine Optimization".
+
+Follow this EXACT template and flow (keep the structure; change only the specifics):
+
+Hi {FirstName}, I asked **ChatGPT**:
+**"What are the best {industry} companies in {location} for {a specific service} with {a differentiator}?"**
+It recommended other companies, but *{Company}* didn't appear in that response.
+We can help improve your visibility in **ChatGPT**, **Perplexity**, **Gemini** and other AI platforms to attract more potential clients and strengthen your company's reputation.
+Would you like me to send you more information?
+
+LEAD DATA (use ONLY this — never invent company facts):
+- First name: ${d.first || '(unknown)'}
+- Company: ${d.company || 'their company'}
+- Industry / services: ${d.vertical || 'their industry'}
+- Location: ${loc}
+
+FORMATTING (critical):
+- Wrap the ENTIRE fake ChatGPT question in **double asterisks**.
+- Wrap each of the words ChatGPT, Perplexity, Gemini in **double asterisks** wherever they appear.
+- Wrap the company name in *single asterisks*.
+- Use NO other markdown. No emojis, hashtags, or links.
+
+RULES:
+- Invent ONLY the realistic customer search question (specific to this company's industry + location). Everything else uses the real data above.
+- Do NOT add any signature, sign-off, name, or placeholder (no "Best,", no "[Your Name]"). End with exactly: Would you like me to send you more information?  — and write nothing after it.
+- Output ONLY the finished message.`;
+}
+
+function buildEmailPrompt(d) {
+  const loc = [d.address, d.country].filter(Boolean).join(', ') || 'their area';
+  return `Write a short cold intro EMAIL (with a subject line) from an agency that helps companies get recommended by AI assistants. Same idea as the LinkedIn template, in email form.
+
+Follow this flow:
+
+Subject: {specific, under 60 chars, about being found in AI / ChatGPT search}
+
+Hi {FirstName},
+
+I asked **ChatGPT**: **"What are the best {industry} companies in {location} for {a specific service}?"** — and *{Company}* didn't appear. It recommended competitors instead.
+
+More and more customers search with AI assistants (ChatGPT, Perplexity, Gemini) instead of Google. We help businesses like *{Company}* get recommended inside those AI answers, so you win those leads and strengthen your reputation.
+
+Would you like me to send you more information?
+
+LEAD DATA (use ONLY this — never invent company facts):
+- First name: ${d.first || '(unknown)'}
+- Company: ${d.company || 'their company'}
+- Industry / services: ${d.vertical || 'their industry'}
+- Location: ${loc}
+
+FORMATTING: bold with **double asterisks** (the ChatGPT question and the words ChatGPT/Perplexity/Gemini), italic company name with *single asterisks*. No other markdown.
+
+RULES:
+- Invent ONLY the realistic customer search question. Everything else uses the real data.
+- Do NOT add any signature, sign-off, sender name, company, or placeholder (no "Best,", no "[Your Name]", no "[Company]"). End with exactly: Would you like me to send you more information?  — and write nothing after it.
+- Output ONLY the email: the "Subject:" line, then the body.`;
+}
+
 async function generateMessagesForItem(config, ctx, dbRef, auto) {
   const item = ctx.item;
   if (!item) return;
@@ -228,17 +315,21 @@ async function generateMessagesForItem(config, ctx, dbRef, auto) {
   }
   const model = config.model || keyRow.model || undefined;
 
+  // 1500 output tokens: some models (e.g. gpt-oss) spend tokens on reasoning, and
+  // a too-low limit returned an empty LinkedIn message.
   const [linkedin, email] = await Promise.all([
-    generateText(provider, keyRow.api_key, { prompt: buildLinkedInPrompt(d), model, max_tokens: 500 })
+    generateText(provider, keyRow.api_key, { prompt: buildLinkedInPrompt(d), model, max_tokens: 1500 })
       .catch(e => { console.error('[generate_messages linkedin]', e.message); return ''; }),
-    generateText(provider, keyRow.api_key, { prompt: buildEmailPrompt(d), model, max_tokens: 700 })
+    generateText(provider, keyRow.api_key, { prompt: buildEmailPrompt(d), model, max_tokens: 1500 })
       .catch(e => { console.error('[generate_messages email]', e.message); return ''; }),
   ]);
 
   const liCol = ensureColumn(dbRef, item.board_id, config.linkedin_column || 'Linkedin 1st Message');
   const emCol = ensureColumn(dbRef, item.board_id, config.email_column || 'Intro email');
-  if (linkedin && linkedin.trim()) writeValue(dbRef, item.id, liCol, linkedin.trim());
-  if (email && email.trim())       writeValue(dbRef, item.id, emCol, email.trim());
+  const styledLi = applyStyle(linkedin).trim();
+  const styledEm = applyStyle(email).trim();
+  if (styledLi) writeValue(dbRef, item.id, liCol, styledLi);
+  if (styledEm) writeValue(dbRef, item.id, emCol, styledEm);
 }
 
 module.exports = router;
