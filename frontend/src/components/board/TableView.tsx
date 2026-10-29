@@ -661,22 +661,41 @@ export default function TableView() {
                         })}
                       </SortableContext>
 
-                      {/* Pagination — render 100 rows at a time so big groups stay fast */}
+                      {/* Pagination — 100 rows at a time. Sticky to the left so the
+                          controls stay visible no matter how wide the board scrolls. */}
                       {pageCount > 1 && (
-                        <div className="flex items-center justify-between px-4 py-2 border-b border-gray-100 bg-gray-50/60 text-xs text-gray-600">
-                          <span>
-                            Showing {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filteredItems.length)} of {filteredItems.length}
-                          </span>
-                          <div className="flex items-center gap-1">
-                            <button onClick={() => setPage(0)} disabled={page === 0}
-                              className="px-2 py-1 rounded hover:bg-gray-200 disabled:opacity-40">« First</button>
-                            <button onClick={() => setPage(page - 1)} disabled={page === 0}
-                              className="px-2 py-1 rounded hover:bg-gray-200 disabled:opacity-40">‹ Prev</button>
-                            <span className="px-2">Page {page + 1} / {pageCount}</span>
-                            <button onClick={() => setPage(page + 1)} disabled={page >= pageCount - 1}
-                              className="px-2 py-1 rounded hover:bg-gray-200 disabled:opacity-40">Next ›</button>
-                            <button onClick={() => setPage(pageCount - 1)} disabled={page >= pageCount - 1}
-                              className="px-2 py-1 rounded hover:bg-gray-200 disabled:opacity-40">Last »</button>
+                        <div className="border-b border-gray-100 bg-gray-50/60">
+                          <div className="sticky left-0 w-fit max-w-full flex items-center gap-2 px-4 py-2 text-xs text-gray-600 flex-wrap">
+                            <span className="whitespace-nowrap">
+                              {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filteredItems.length)} of {filteredItems.length}
+                            </span>
+                            <div className="flex items-center gap-1">
+                              <button onClick={() => setPage(page - 1)} disabled={page === 0}
+                                className="px-2 py-1 rounded hover:bg-gray-200 disabled:opacity-40">‹</button>
+                              {(() => {
+                                // Windowed page numbers: always show first & last, a window
+                                // around the current page, and … gaps between.
+                                const nums: number[] = [];
+                                for (let i = 0; i < pageCount; i++) {
+                                  if (i === 0 || i === pageCount - 1 || Math.abs(i - page) <= 1) nums.push(i);
+                                }
+                                const out: React.ReactNode[] = [];
+                                let prev = -1;
+                                for (const i of nums) {
+                                  if (prev >= 0 && i - prev > 1) out.push(<span key={`g${i}`} className="px-1 text-gray-400">…</span>);
+                                  out.push(
+                                    <button key={i} onClick={() => setPage(i)}
+                                      className={`min-w-7 px-2 py-1 rounded ${i === page ? 'bg-monday-blue text-white' : 'hover:bg-gray-200'}`}>
+                                      {i + 1}
+                                    </button>
+                                  );
+                                  prev = i;
+                                }
+                                return out;
+                              })()}
+                              <button onClick={() => setPage(page + 1)} disabled={page >= pageCount - 1}
+                                className="px-2 py-1 rounded hover:bg-gray-200 disabled:opacity-40">›</button>
+                            </div>
                           </div>
                         </div>
                       )}
