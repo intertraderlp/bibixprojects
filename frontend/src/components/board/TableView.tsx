@@ -10,6 +10,7 @@ import {
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import { Plus, ChevronDown, ChevronRight, MoreHorizontal, Trash2, GripVertical, Settings, ChevronUp, Filter, X, ArrowUpAZ, ArrowDownAZ, ArrowUp, ArrowDown, Sigma } from 'lucide-react';
+import { totalSecondsFromRaw, formatHMS } from '../../lib/timeTracking';
 import { useBoardStore } from '../../store/boardStore';
 import api from '../../api/client';
 import type { Column, Group, Item } from '../../types';
@@ -25,17 +26,18 @@ const NAME_COL_WIDTH = 300;
 const DEFAULT_COL_WIDTH = 140;
 
 // ─── Column summaries ────────────────────────────────────────────────────────
-type SummaryType = 'sum' | 'avg' | 'min' | 'max' | 'count' | 'empty' | 'pct_checked' | 'checked' | 'breakdown';
+type SummaryType = 'sum' | 'avg' | 'min' | 'max' | 'count' | 'empty' | 'pct_checked' | 'checked' | 'breakdown' | 'total_time';
 
 const SUMMARY_LABELS: Record<SummaryType, string> = {
   sum: 'Sum', avg: 'Average', min: 'Min', max: 'Max', count: 'Count filled', empty: 'Count empty',
-  pct_checked: '% checked', checked: 'Checked', breakdown: 'Breakdown',
+  pct_checked: '% checked', checked: 'Checked', breakdown: 'Breakdown', total_time: 'Total time',
 };
 
 function summaryOptionsFor(type: string): SummaryType[] {
   if (type === 'number') return ['sum', 'avg', 'min', 'max', 'count', 'empty'];
   if (type === 'checkbox') return ['pct_checked', 'checked', 'empty'];
   if (type === 'status' || type === 'priority') return ['count', 'empty', 'breakdown'];
+  if (type === 'time_tracking') return ['total_time', 'count', 'empty'];
   return ['count', 'empty'];
 }
 
@@ -51,6 +53,7 @@ function computeSummary(s: SummaryType, values: (string | null)[]): string {
     case 'empty': return String(total - filled.length);
     case 'checked': { const c = values.filter(v => v === 'true').length; return `${c}/${total}`; }
     case 'pct_checked': { const c = values.filter(v => v === 'true').length; return total ? `${Math.round((c / total) * 100)}%` : '0%'; }
+    case 'total_time': return formatHMS(values.reduce((s, v) => s + totalSecondsFromRaw(v), 0));
     case 'breakdown': {
       const counts: Record<string, number> = {};
       filled.forEach(v => { counts[v as string] = (counts[v as string] || 0) + 1; });

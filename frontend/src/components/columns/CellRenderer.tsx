@@ -9,6 +9,7 @@ import TagsCell from './TagsCell';
 import LinkCell from './LinkCell';
 import AttachmentsCell from './AttachmentsCell';
 import FormulaCell from './FormulaCell';
+import TimeTrackingCell from './TimeTrackingCell';
 
 interface Props {
   column: Column;
@@ -43,6 +44,8 @@ export default function CellRenderer({ column, value, onChange, workspaceId, ite
       return itemId ? <AttachmentsCell itemId={itemId} /> : null;
     case 'formula':
       return <FormulaCell itemId={itemId} formula={(column.settings as { formula?: string })?.formula} />;
+    case 'time_tracking':
+      return <TimeTrackingCell value={value} onChange={onChange} />;
     default:
       return <TextCell value={value} onChange={onChange} />;
   }

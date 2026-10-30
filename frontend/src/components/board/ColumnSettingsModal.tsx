@@ -2,7 +2,7 @@ import { useState } from 'react';
 import {
   Plus, Trash2, GripVertical, AlertTriangle,
   Type, Star, Flag, User, Calendar, Hash, CheckSquare,
-  Tag, Link, Paperclip, ArrowRight, Calculator,
+  Tag, Link, Paperclip, ArrowRight, Calculator, Timer,
 } from 'lucide-react';
 import { useBoardStore } from '../../store/boardStore';
 import type { Column, ColumnType, StatusOption } from '../../types';
@@ -27,6 +27,7 @@ const COLUMN_TYPES: { type: ColumnType; label: string; icon: React.ReactNode }[]
   { type: 'person',      label: 'Person',      icon: <User size={14} />        },
   { type: 'attachments', label: 'Attachments', icon: <Paperclip size={14} />   },
   { type: 'formula',     label: 'Formula',     icon: <Calculator size={14} />  },
+  { type: 'time_tracking', label: 'Time',      icon: <Timer size={14} />       },
 ];
 
 // ── Default options for status/priority ───────────────────────────────────────
