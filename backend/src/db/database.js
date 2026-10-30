@@ -95,6 +95,22 @@ for (const m of migrations) {
   try { rawDb.exec(m); } catch { /* column already exists */ }
 }
 
+// Per-board message templates for the ⚡ row Actions (tokens + AI segments).
+try {
+  rawDb.exec(`CREATE TABLE IF NOT EXISTS message_templates (
+    id TEXT PRIMARY KEY,
+    board_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    target_column TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL DEFAULT '',
+    ai_provider TEXT,
+    apply_styling INTEGER NOT NULL DEFAULT 0,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
+} catch (e) { console.warn('[DB] message_templates skipped:', e.message); }
+
 // ── Performance indexes ───────────────────────────────────────────────────────
 // Core tables shipped with NO indexes, so every board load did full table scans —
 // and because node-sqlite3-wasm is synchronous, each scan froze the whole process.
@@ -110,6 +126,7 @@ const indexes = [
   'CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, created_at)',
   'CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members(user_id)',
   'CREATE INDEX IF NOT EXISTS idx_automations_board ON automations(board_id)',
+  'CREATE INDEX IF NOT EXISTS idx_message_templates_board ON message_templates(board_id)',
 ];
 for (const ix of indexes) {
   try { rawDb.exec(ix); } catch (e) { console.warn('[DB] index skipped:', e.message); }

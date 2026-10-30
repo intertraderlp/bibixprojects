@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import api from '../api/client';
-import type { BoardData, Column, Group, Item, ItemValue, ColumnType } from '../types';
+import type { BoardData, Column, Group, Item, ItemValue, ColumnType, MessageTemplate } from '../types';
 
 // ── Value lookup caches ───────────────────────────────────────────────────────
 // getValue/getItemValues are called once PER CELL during render. A linear scan of
@@ -44,12 +44,30 @@ interface BoardState {
   updateBoard: (data: { name?: string; description?: string; icon?: string }) => Promise<void>;
   getItemValues: (itemId: string) => ItemValue[];
   getValue: (itemId: string, columnId: string) => string | null;
+  templates: MessageTemplate[];
+  loadTemplates: (boardId: string) => Promise<void>;
+  runTemplate: (templateId: string, itemId: string) => Promise<{ column_name: string }>;
 }
 
 export const useBoardStore = create<BoardState>((set, get) => ({
   board: null,
   loading: false,
   error: null,
+  templates: [],
+
+  loadTemplates: async (boardId) => {
+    try {
+      const { data } = await api.get('/templates', { params: { board_id: boardId } });
+      set({ templates: data });
+    } catch { set({ templates: [] }); }
+  },
+
+  runTemplate: async (templateId, itemId) => {
+    const { data } = await api.post(`/templates/${templateId}/run`, { item_id: itemId });
+    const boardId = get().board?.id;
+    if (boardId) await get().refreshBoard(boardId);
+    return data;
+  },
 
   loadBoard: async (id) => {
     set({ loading: true, error: null });

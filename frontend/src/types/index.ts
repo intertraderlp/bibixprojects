@@ -63,6 +63,19 @@ export interface Column {
   width?: number;
 }
 
+export interface MessageTemplate {
+  id: string;
+  board_id: string;
+  name: string;
+  target_column: string;
+  body: string;
+  ai_provider: string | null;
+  apply_styling: number;
+  position: number;
+  created_by?: string;
+  created_at?: string;
+}
+
 export interface Group {
   id: string;
   board_id: string;

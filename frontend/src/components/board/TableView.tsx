@@ -9,7 +9,7 @@ import {
   horizontalListSortingStrategy, useSortable, arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Plus, ChevronDown, ChevronRight, MoreHorizontal, Trash2, GripVertical, Settings, ChevronUp, Filter, X, ArrowUpAZ, ArrowDownAZ, ArrowUp, ArrowDown, Sigma } from 'lucide-react';
+import { Plus, ChevronDown, ChevronRight, MoreHorizontal, Trash2, GripVertical, Settings, ChevronUp, Filter, X, ArrowUpAZ, ArrowDownAZ, ArrowUp, ArrowDown, Sigma, Zap, Sparkles } from 'lucide-react';
 import { totalSecondsFromRaw, formatHMS } from '../../lib/timeTracking';
 import { useBoardStore } from '../../store/boardStore';
 import api from '../../api/client';
@@ -254,7 +254,7 @@ function SortableGroupHeader({ group, itemCount, collapsed, filterActive, onTogg
   );
 }
 
-function SortableItemRow({ item, group, columns, board, colWidths, onOpen, onDelete, onValueChange, isSubtask, subtaskCount, expanded, onToggleExpand, onAddSubtask, onPromote, onDemote, demoteTargets, hasSubtasks }: {
+function SortableItemRow({ item, group, columns, board, colWidths, onOpen, onDelete, onValueChange, isSubtask, subtaskCount, expanded, onToggleExpand, onAddSubtask, onPromote, onDemote, demoteTargets, hasSubtasks, templates, onRunTemplate }: {
   item: Item; group: Group; columns: Column[];
   board: { workspace_id: string }; colWidths: Record<string, number>;
   onOpen: () => void; onDelete: () => void;
@@ -263,6 +263,7 @@ function SortableItemRow({ item, group, columns, board, colWidths, onOpen, onDel
   expanded?: boolean; onToggleExpand?: () => void; onAddSubtask?: () => void;
   onPromote?: () => void; onDemote?: (parentId: string) => void;
   demoteTargets?: { id: string; name: string }[]; hasSubtasks?: boolean;
+  templates?: { id: string; name: string }[]; onRunTemplate?: (templateId: string) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: item.id, data: { type: isSubtask ? 'subtask' : 'item', groupId: item.group_id, parentId: item.parent_item_id }
@@ -298,6 +299,25 @@ function SortableItemRow({ item, group, columns, board, colWidths, onOpen, onDel
             <Plus size={12} />
           </button>
         )}
+        {/* ⚡ Run template / action */}
+        <Dropdown align="right" className="flex-shrink-0"
+          trigger={
+            <button type="button"
+              className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-amber-500 flex-shrink-0"
+              title="Run action">
+              <Zap size={13} />
+            </button>
+          }>
+          <div className="px-4 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Run template</div>
+          {templates && templates.length > 0
+            ? templates.map(t => (
+                <DropdownItem key={t.id} onClick={() => onRunTemplate?.(t.id)}>
+                  <Sparkles size={13} /> <span className="truncate">{t.name}</span>
+                </DropdownItem>
+              ))
+            : <DropdownItem disabled><Sparkles size={13} /> No templates yet</DropdownItem>}
+        </Dropdown>
+
         {/* Promote / demote menu */}
         <Dropdown align="right" className="flex-shrink-0"
           trigger={
@@ -348,7 +368,22 @@ function SortableItemRow({ item, group, columns, board, colWidths, onOpen, onDel
 
 export default function TableView() {
   const store = useBoardStore();
-  const { board, addItem, deleteItem, updateItem, addGroup, updateGroup, deleteGroup, updateItemValue, updateColumn, deleteColumn, reorderGroups, reorderItems, reorderColumns, getValue } = store;
+  const { board, addItem, deleteItem, updateItem, addGroup, updateGroup, deleteGroup, updateItemValue, updateColumn, deleteColumn, reorderGroups, reorderItems, reorderColumns, getValue, templates, loadTemplates, runTemplate } = store;
+
+  useEffect(() => { if (board) loadTemplates(board.id); }, [board?.id]);
+
+  // Run a template against a row and report where the result landed.
+  const runTpl = async (templateId: string, itemId: string) => {
+    const tid = toast.loading('Generating…');
+    try {
+      const r = await runTemplate(templateId, itemId);
+      toast.success(`Written to "${r.column_name}"`, { id: tid });
+    } catch (err) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      toast.error(msg || 'Failed to run template', { id: tid });
+    }
+  };
+  const tplList = templates.map(t => ({ id: t.id, name: t.name }));
 
   // Set or clear a column's summary (stored inside the column's settings blob).
   const handleSummarize = (col: Column, s: SummaryType | null) => {
@@ -733,6 +768,8 @@ export default function TableView() {
                                 hasSubtasks={subs.length > 0}
                                 demoteTargets={filteredItems.filter(t => t.id !== item.id).map(t => ({ id: t.id, name: t.name }))}
                                 onDemote={pid => changeParent(item.id, pid)}
+                                templates={tplList}
+                                onRunTemplate={id => runTpl(id, item.id)}
                               />
                               {/* Subtask add row — always shown on hover */}
                               {newSubtaskFor === item.id ? (
@@ -759,6 +796,8 @@ export default function TableView() {
                                         onDelete={() => deleteItem(sub.id)}
                                         onValueChange={(colId, val) => updateItemValue(sub.id, colId, val)}
                                         onPromote={() => changeParent(sub.id, null)}
+                                        templates={tplList}
+                                        onRunTemplate={id => runTpl(id, sub.id)}
                                       />
                                     ))}
                                   </SortableContext>

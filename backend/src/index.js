@@ -45,6 +45,7 @@ app.use('/api/updates', require('./routes/updates'));
 app.use('/api/notifications', require('./routes/notifications'));
 app.use('/api/push', require('./routes/push'));
 app.use('/api/automations', require('./routes/automations'));
+app.use('/api/templates', require('./routes/templates'));
 app.use('/api/search', require('./routes/search'));
 
 const attachmentsRouter = require('./routes/attachments');
