@@ -241,7 +241,7 @@ function SortableItemRow({ item, group, columns, board, colWidths, onOpen, onDel
         {/* Promote / demote menu */}
         <Dropdown align="right" className="flex-shrink-0"
           trigger={
-            <button onClick={e => e.stopPropagation()}
+            <button type="button"
               className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-gray-600 flex-shrink-0"
               title="Move in hierarchy">
               <MoreHorizontal size={13} />
