@@ -204,10 +204,11 @@ function SortableColumnHeader({ col, width, sortDir, onResize, onSettings, onDel
   );
 }
 
-function SortableGroupHeader({ group, itemCount, collapsed, filterActive, onToggle, onRename, onColorChange, onDelete, onFilterToggle }: {
+function SortableGroupHeader({ group, itemCount, collapsed, filterActive, onToggle, onRename, onColorChange, onDelete, onFilterToggle, selectState, onToggleSelectAll }: {
   group: Group; itemCount: number; collapsed: boolean; filterActive: boolean;
   onToggle: () => void; onRename: (name: string) => void;
   onColorChange: (color: string) => void; onDelete: () => void; onFilterToggle: () => void;
+  selectState?: 'none' | 'some' | 'all'; onToggleSelectAll?: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `group-${group.id}`, data: { type: 'group', groupId: group.id } });
   const [editing, setEditing] = useState(false);
@@ -221,6 +222,13 @@ function SortableGroupHeader({ group, itemCount, collapsed, filterActive, onTogg
         <button onClick={onToggle} className="text-gray-500 hover:text-gray-700">
           {collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
         </button>
+        {onToggleSelectAll && (
+          <input type="checkbox" checked={selectState === 'all'}
+            ref={el => { if (el) el.indeterminate = selectState === 'some'; }}
+            onChange={onToggleSelectAll}
+            title="Select all in group"
+            className="w-3.5 h-3.5 cursor-pointer accent-monday-blue flex-shrink-0" />
+        )}
         <div className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: group.color }} />
         {editing ? (
           <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
@@ -264,6 +272,7 @@ function SortableItemRow({ item, group, columns, board, colWidths, onOpen, onDel
   onPromote?: () => void; onDemote?: (parentId: string) => void;
   demoteTargets?: { id: string; name: string }[]; hasSubtasks?: boolean;
   templates?: { id: string; name: string }[]; onRunTemplate?: (templateId: string) => void;
+  selected?: boolean; onToggleSelect?: (e: React.MouseEvent) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: item.id, data: { type: isSubtask ? 'subtask' : 'item', groupId: item.group_id, parentId: item.parent_item_id }
@@ -272,10 +281,12 @@ function SortableItemRow({ item, group, columns, board, colWidths, onOpen, onDel
 
   return (
     <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.35 : 1 }}
-      className={`flex border-b border-gray-100 hover:bg-gray-50 group ${isSubtask ? 'bg-gray-50/50' : 'bg-white'}`}>
+      className={`flex border-b border-gray-100 hover:bg-gray-50 group ${selected ? 'bg-blue-50/60' : isSubtask ? 'bg-gray-50/50' : 'bg-white'}`}>
       {/* Grip + Name col (sticky) */}
-      <div className={`sticky left-0 z-10 flex items-center gap-1 border-r border-gray-200 h-9 flex-shrink-0 ${isSubtask ? 'bg-gray-50' : 'bg-white'} group-hover:bg-gray-50`} style={{ width: NAME_COL_WIDTH }}>
+      <div className={`sticky left-0 z-10 flex items-center gap-1 border-r border-gray-200 h-9 flex-shrink-0 ${selected ? 'bg-blue-50/60' : isSubtask ? 'bg-gray-50' : 'bg-white'} group-hover:bg-gray-50`} style={{ width: NAME_COL_WIDTH }}>
         <span {...attributes} {...listeners} className="cursor-grab text-gray-200 hover:text-gray-400 pl-2 flex-shrink-0"><GripVertical size={13} /></span>
+        <input type="checkbox" checked={!!selected} onClick={e => onToggleSelect?.(e)} onChange={() => {}}
+          className={`flex-shrink-0 w-3.5 h-3.5 cursor-pointer accent-monday-blue ${selected ? '' : 'opacity-0 group-hover:opacity-100'}`} />
         {isSubtask && <span className="w-4 flex-shrink-0" />}
         <div className="w-1 h-5 rounded flex-shrink-0" style={{ backgroundColor: group.color }} />
         <span className="flex-1 text-sm text-gray-800 cursor-pointer hover:text-monday-blue truncate px-1" onClick={onOpen}>
@@ -384,6 +395,47 @@ export default function TableView() {
     }
   };
   const tplList = templates.map(t => ({ id: t.id, name: t.name }));
+
+  // ── Bulk selection ──────────────────────────────────────────────────────────
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkColId, setBulkColId] = useState('');
+  const [bulkValue, setBulkValue] = useState('');
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  const toggleSelect = (id: string) => setSelected(s => {
+    const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n;
+  });
+  const setGroupSelected = (ids: string[], on: boolean) => setSelected(s => {
+    const n = new Set(s); ids.forEach(id => on ? n.add(id) : n.delete(id)); return n;
+  });
+  const clearSelection = () => { setSelected(new Set()); setBulkColId(''); setBulkValue(''); };
+
+  const bulkCol = board?.columns.find(c => c.id === bulkColId) || null;
+
+  const applyBulkValue = async () => {
+    if (!bulkColId || selected.size === 0) return;
+    setBulkBusy(true);
+    const ids = [...selected];
+    try {
+      for (const id of ids) {
+        await updateItemValue(id, bulkColId, bulkValue === '' ? null : bulkValue);
+      }
+      toast.success(`Updated ${ids.length} item${ids.length > 1 ? 's' : ''}`);
+    } catch { toast.error('Some updates failed'); }
+    finally { setBulkBusy(false); }
+  };
+
+  const bulkDelete = async () => {
+    if (selected.size === 0 || !confirm(`Delete ${selected.size} selected item(s)? This cannot be undone.`)) return;
+    setBulkBusy(true);
+    const ids = [...selected];
+    try {
+      for (const id of ids) await deleteItem(id);
+      toast.success(`Deleted ${ids.length}`);
+      clearSelection();
+    } catch { toast.error('Some deletions failed'); }
+    finally { setBulkBusy(false); }
+  };
 
   // Set or clear a column's summary (stored inside the column's settings blob).
   const handleSummarize = (col: Column, s: SummaryType | null) => {
@@ -662,6 +714,10 @@ export default function TableView() {
               const pagedItems = filteredItems.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
               const setPage = (p: number) => setPageByGroup(s => ({ ...s, [group.id]: Math.max(0, Math.min(p, pageCount - 1)) }));
 
+              const gIds = filteredItems.map(i => i.id);
+              const gSel = gIds.filter(id => selected.has(id)).length;
+              const gSelState: 'none' | 'some' | 'all' = gSel === 0 ? 'none' : gSel === gIds.length ? 'all' : 'some';
+
               return (
                 <div key={group.id} className="mb-6">
                   <SortableGroupHeader
@@ -672,6 +728,8 @@ export default function TableView() {
                     onColorChange={color => updateGroup(group.id, { color })}
                     onDelete={() => { if (confirm('Delete group?')) { deleteGroup(group.id); toast.success('Deleted'); } }}
                     onFilterToggle={() => setShowFilters(f => ({ ...f, [group.id]: !f[group.id] }))}
+                    selectState={gSelState}
+                    onToggleSelectAll={() => setGroupSelected(gIds, gSelState !== 'all')}
                   />
 
                   {!collapsed && (
@@ -770,6 +828,8 @@ export default function TableView() {
                                 onDemote={pid => changeParent(item.id, pid)}
                                 templates={tplList}
                                 onRunTemplate={id => runTpl(id, item.id)}
+                                selected={selected.has(item.id)}
+                                onToggleSelect={() => toggleSelect(item.id)}
                               />
                               {/* Subtask add row — always shown on hover */}
                               {newSubtaskFor === item.id ? (
@@ -798,6 +858,8 @@ export default function TableView() {
                                         onPromote={() => changeParent(sub.id, null)}
                                         templates={tplList}
                                         onRunTemplate={id => runTpl(id, sub.id)}
+                                        selected={selected.has(sub.id)}
+                                        onToggleSelect={() => toggleSelect(sub.id)}
                                       />
                                     ))}
                                   </SortableContext>
@@ -936,6 +998,57 @@ export default function TableView() {
       {selectedItem && <ItemModal item={selectedItem} onClose={() => setSelectedItem(null)} />}
       {showAddCol && <AddColumnModal onClose={() => setShowAddCol(false)} />}
       {settingsCol && <ColumnSettingsModal column={settingsCol} onClose={() => setSettingsCol(null)} />}
+
+      {/* ── Bulk action bar ──────────────────────────────────────────────── */}
+      {selected.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 bg-white shadow-2xl border border-gray-200 rounded-xl px-4 py-2.5 max-w-[95vw] flex-wrap">
+          <span className="flex items-center gap-2 text-sm font-medium text-gray-700">
+            <span className="bg-monday-blue text-white rounded-full w-6 h-6 flex items-center justify-center text-xs">{selected.size}</span>
+            selected
+          </span>
+          <div className="h-5 w-px bg-gray-200" />
+          <span className="text-sm text-gray-500">Set</span>
+          <select value={bulkColId} onChange={e => { setBulkColId(e.target.value); setBulkValue(''); }}
+            className="text-sm border border-gray-300 rounded-lg px-2 py-1.5 max-w-[150px]">
+            <option value="">column…</option>
+            {(board?.columns || [])
+              .filter(c => !['formula', 'time_tracking', 'attachments', 'person', 'timeline'].includes(c.type))
+              .map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+
+          {bulkCol && (bulkCol.type === 'status' || bulkCol.type === 'priority') ? (
+            <select value={bulkValue} onChange={e => setBulkValue(e.target.value)}
+              className="text-sm border border-gray-300 rounded-lg px-2 py-1.5">
+              <option value="">(empty)</option>
+              {(bulkCol.settings?.options || []).map(o => <option key={o.label} value={o.label}>{o.label}</option>)}
+            </select>
+          ) : bulkCol && bulkCol.type === 'checkbox' ? (
+            <select value={bulkValue} onChange={e => setBulkValue(e.target.value)}
+              className="text-sm border border-gray-300 rounded-lg px-2 py-1.5">
+              <option value="">(unset)</option>
+              <option value="true">Checked</option>
+              <option value="false">Unchecked</option>
+            </select>
+          ) : bulkCol ? (
+            <input value={bulkValue} onChange={e => setBulkValue(e.target.value)}
+              type={bulkCol.type === 'number' ? 'number' : bulkCol.type === 'date' ? 'date' : 'text'}
+              placeholder="value" className="text-sm border border-gray-300 rounded-lg px-2 py-1.5 w-36" />
+          ) : null}
+
+          <button onClick={applyBulkValue} disabled={!bulkColId || bulkBusy}
+            className="text-sm bg-monday-blue text-white px-3 py-1.5 rounded-lg hover:bg-blue-600 disabled:opacity-40">
+            {bulkBusy ? 'Applying…' : 'Apply'}
+          </button>
+          <div className="h-5 w-px bg-gray-200" />
+          <button onClick={bulkDelete} disabled={bulkBusy}
+            className="flex items-center gap-1 text-sm text-red-600 hover:bg-red-50 px-2.5 py-1.5 rounded-lg disabled:opacity-40">
+            <Trash2 size={14} /> Delete
+          </button>
+          <button onClick={clearSelection} className="flex items-center gap-1 text-sm text-gray-500 hover:bg-gray-100 px-2.5 py-1.5 rounded-lg">
+            <X size={14} /> Clear
+          </button>
+        </div>
+      )}
     </DndContext>
   );
 }
