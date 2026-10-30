@@ -409,6 +409,7 @@ export default function TableView() {
     const n = new Set(s); ids.forEach(id => on ? n.add(id) : n.delete(id)); return n;
   });
   const [openColId, setOpenColId] = useState('');
+  const [blockedLinks, setBlockedLinks] = useState<string[]>([]);
   const clearSelection = () => { setSelected(new Set()); setBulkColId(''); setBulkValue(''); setOpenColId(''); };
 
   const bulkCol = board?.columns.find(c => c.id === bulkColId) || null;
@@ -431,18 +432,25 @@ export default function TableView() {
     const unique = [...new Set(urls)];
     if (unique.length === 0) { toast.error('No links found in that field for the selected items'); return; }
     if (unique.length > 10 && !confirm(`Open ${unique.length} tabs? Your browser may ask to allow multiple pop-ups.`)) return;
-    // Open each via a programmatic anchor click rather than window.open in a
-    // loop — browsers block all-but-the-first window.open as pop-ups, but allow
-    // multiple anchor clicks fired during the same user gesture.
+    // Browsers block all-but-the-first tab opened from one click as pop-ups.
+    // Open each and detect which were blocked (window.open returns null), then
+    // offer the blocked ones in a fallback panel the user can click through.
+    // NOTE: don't pass 'noopener' in the features string — that makes
+    // window.open always return null, defeating block detection; clear opener
+    // manually instead.
+    const blocked: string[] = [];
     unique.forEach(u => {
-      const a = document.createElement('a');
-      a.href = u; a.target = '_blank'; a.rel = 'noopener noreferrer';
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
+      const w = window.open(u, '_blank');
+      if (w) { try { w.opener = null; } catch { /* cross-origin */ } }
+      else blocked.push(u);
     });
     const skipped = selected.size - urls.length;
-    toast.success(`Opened ${unique.length} link${unique.length > 1 ? 's' : ''}${skipped > 0 ? ` · ${skipped} item${skipped > 1 ? 's' : ''} had none` : ''}`);
+    const opened = unique.length - blocked.length;
+    if (blocked.length) {
+      setBlockedLinks(blocked);
+    } else {
+      toast.success(`Opened ${opened} link${opened > 1 ? 's' : ''}${skipped > 0 ? ` · ${skipped} item${skipped > 1 ? 's' : ''} had none` : ''}`);
+    }
   };
 
   const applyBulkValue = async () => {
@@ -1098,6 +1106,30 @@ export default function TableView() {
             <X size={14} /> Clear
           </button>
         </div>
+      )}
+
+      {/* ── Blocked-links fallback ───────────────────────────────────────── */}
+      {blockedLinks.length > 0 && createPortal(
+        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" onClick={() => setBlockedLinks([])}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-gray-100">
+              <h3 className="font-semibold text-gray-800 flex items-center gap-2"><ExternalLink size={16} /> Your browser blocked {blockedLinks.length} tab{blockedLinks.length > 1 ? 's' : ''}</h3>
+              <p className="text-xs text-gray-500 mt-1">Click a link below to open it. To open them all automatically next time, allow pop-ups for this site in your browser's address bar.</p>
+            </div>
+            <div className="overflow-auto px-5 py-3 space-y-1">
+              {blockedLinks.map((u, i) => (
+                <a key={i} href={u} target="_blank" rel="noreferrer"
+                  className="flex items-center gap-2 text-sm text-monday-blue hover:underline py-1.5 truncate">
+                  <ExternalLink size={13} className="flex-shrink-0" /><span className="truncate">{u.replace(/^https?:\/\//, '')}</span>
+                </a>
+              ))}
+            </div>
+            <div className="px-5 py-3 border-t border-gray-100 flex justify-end">
+              <button onClick={() => setBlockedLinks([])} className="text-sm text-gray-600 hover:bg-gray-100 px-3 py-1.5 rounded-lg">Close</button>
+            </div>
+          </div>
+        </div>,
+        document.body
       )}
     </DndContext>
   );
