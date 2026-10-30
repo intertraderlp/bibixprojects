@@ -431,7 +431,16 @@ export default function TableView() {
     const unique = [...new Set(urls)];
     if (unique.length === 0) { toast.error('No links found in that field for the selected items'); return; }
     if (unique.length > 10 && !confirm(`Open ${unique.length} tabs? Your browser may ask to allow multiple pop-ups.`)) return;
-    unique.forEach(u => window.open(u, '_blank', 'noopener,noreferrer'));
+    // Open each via a programmatic anchor click rather than window.open in a
+    // loop — browsers block all-but-the-first window.open as pop-ups, but allow
+    // multiple anchor clicks fired during the same user gesture.
+    unique.forEach(u => {
+      const a = document.createElement('a');
+      a.href = u; a.target = '_blank'; a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    });
     const skipped = selected.size - urls.length;
     toast.success(`Opened ${unique.length} link${unique.length > 1 ? 's' : ''}${skipped > 0 ? ` · ${skipped} item${skipped > 1 ? 's' : ''} had none` : ''}`);
   };
