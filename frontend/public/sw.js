@@ -1,11 +1,15 @@
-// Bibix Projects Service Worker
-const CACHE = 'bibix-v3';
+// Bibix Projects Service Worker — push notifications only.
+// NOTE: this worker intentionally does NOT cache or intercept any fetch.
+// A cache-first fetch handler used to serve stale app-shell/assets after a
+// deploy, producing blank pages. We now always hit the network for everything
+// and wipe every cache on activate so returning clients self-heal.
+const CACHE = 'bibix-v5';
 
 self.addEventListener('install', e => e.waitUntil(self.skipWaiting()));
 self.addEventListener('activate', e => e.waitUntil(
-  caches.keys().then(keys =>
-    Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k)))
-  ).then(() => self.clients.claim())
+  caches.keys()
+    .then(keys => Promise.all(keys.map(k => caches.delete(k))))
+    .then(() => self.clients.claim())
 ));
 
 // ── Push notifications ────────────────────────────────────────────────────────
@@ -37,27 +41,5 @@ self.addEventListener('notificationclick', e => {
 });
 
 // ── Fetch caching ─────────────────────────────────────────────────────────────
-self.addEventListener('fetch', e => {
-  // Only handle http/https requests
-  if (!e.request.url.startsWith('http')) return;
-  // Skip API calls
-  if (e.request.url.includes('/api/')) return;
-  // For page navigations, always fetch from network (never use cache for HTML)
-  if (e.request.mode === 'navigate') {
-    e.respondWith(fetch(e.request));
-    return;
-  }
-  // For assets, try cache first then network
-  e.respondWith(
-    caches.match(e.request).then(cached => {
-      if (cached) return cached;
-      return fetch(e.request).then(res => {
-        if (res.ok && res.type !== 'opaque') {
-          const clone = res.clone();
-          caches.open(CACHE).then(c => c.put(e.request, clone));
-        }
-        return res;
-      });
-    })
-  );
-});
+// No fetch handler: the browser handles every request from the network as if
+// no service worker were installed. (Push + notificationclick above still work.)
