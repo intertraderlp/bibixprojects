@@ -194,13 +194,15 @@ function SortableGroupHeader({ group, itemCount, collapsed, filterActive, onTogg
   );
 }
 
-function SortableItemRow({ item, group, columns, board, colWidths, onOpen, onDelete, onValueChange, isSubtask, subtaskCount, expanded, onToggleExpand, onAddSubtask }: {
+function SortableItemRow({ item, group, columns, board, colWidths, onOpen, onDelete, onValueChange, isSubtask, subtaskCount, expanded, onToggleExpand, onAddSubtask, onPromote, onDemote, demoteTargets, hasSubtasks }: {
   item: Item; group: Group; columns: Column[];
   board: { workspace_id: string }; colWidths: Record<string, number>;
   onOpen: () => void; onDelete: () => void;
   onValueChange: (colId: string, val: string | null) => void;
   isSubtask?: boolean; subtaskCount?: number;
   expanded?: boolean; onToggleExpand?: () => void; onAddSubtask?: () => void;
+  onPromote?: () => void; onDemote?: (parentId: string) => void;
+  demoteTargets?: { id: string; name: string }[]; hasSubtasks?: boolean;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: item.id, data: { type: isSubtask ? 'subtask' : 'item', groupId: item.group_id, parentId: item.parent_item_id }
@@ -236,6 +238,34 @@ function SortableItemRow({ item, group, columns, board, colWidths, onOpen, onDel
             <Plus size={12} />
           </button>
         )}
+        {/* Promote / demote menu */}
+        <Dropdown align="right" className="flex-shrink-0"
+          trigger={
+            <button onClick={e => e.stopPropagation()}
+              className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-gray-600 flex-shrink-0"
+              title="Move in hierarchy">
+              <MoreHorizontal size={13} />
+            </button>
+          }>
+          {isSubtask ? (
+            <DropdownItem onClick={() => onPromote?.()}><ArrowUp size={13} /> Promote to task</DropdownItem>
+          ) : hasSubtasks ? (
+            <DropdownItem disabled><ArrowDown size={13} /> Has subtasks — can't demote</DropdownItem>
+          ) : (demoteTargets && demoteTargets.length > 0) ? (
+            <>
+              <div className="px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Make subtask of</div>
+              <div className="max-h-56 overflow-y-auto">
+                {demoteTargets.map(t => (
+                  <DropdownItem key={t.id} onClick={() => onDemote?.(t.id)}>
+                    <ArrowDown size={13} /> <span className="truncate">{t.name}</span>
+                  </DropdownItem>
+                ))}
+              </div>
+            </>
+          ) : (
+            <DropdownItem disabled><ArrowDown size={13} /> No other task to nest under</DropdownItem>
+          )}
+        </Dropdown>
         <button onClick={onDelete} className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-500 pr-2 flex-shrink-0">
           <Trash2 size={12} />
         </button>
@@ -258,7 +288,19 @@ function SortableItemRow({ item, group, columns, board, colWidths, onOpen, onDel
 
 export default function TableView() {
   const store = useBoardStore();
-  const { board, addItem, deleteItem, addGroup, updateGroup, deleteGroup, updateItemValue, deleteColumn, reorderGroups, reorderItems, reorderColumns } = store;
+  const { board, addItem, deleteItem, updateItem, addGroup, updateGroup, deleteGroup, updateItemValue, deleteColumn, reorderGroups, reorderItems, reorderColumns } = store;
+
+  // Promote a subtask to a top-level task, or demote a task into a subtask.
+  const changeParent = async (id: string, parentId: string | null) => {
+    try {
+      await updateItem(id, { parent_item_id: parentId } as never);
+      toast.success(parentId ? 'Made subtask' : 'Promoted to task');
+      if (parentId) setExpandedItems(e => ({ ...e, [parentId]: true }));
+    } catch (err) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      toast.error(msg || 'Could not move item');
+    }
+  };
 
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
   const [showAddCol, setShowAddCol] = useState(false);
@@ -621,6 +663,9 @@ export default function TableView() {
                                 expanded={isExpanded}
                                 onToggleExpand={() => setExpandedItems(e => ({ ...e, [item.id]: !e[item.id] }))}
                                 onAddSubtask={() => { setNewSubtaskFor(item.id); setNewSubtaskName(''); setExpandedItems(e => ({ ...e, [item.id]: true })); }}
+                                hasSubtasks={subs.length > 0}
+                                demoteTargets={filteredItems.filter(t => t.id !== item.id).map(t => ({ id: t.id, name: t.name }))}
+                                onDemote={pid => changeParent(item.id, pid)}
                               />
                               {/* Subtask add row — always shown on hover */}
                               {newSubtaskFor === item.id ? (
@@ -646,6 +691,7 @@ export default function TableView() {
                                         onOpen={() => setSelectedItem(sub)}
                                         onDelete={() => deleteItem(sub.id)}
                                         onValueChange={(colId, val) => updateItemValue(sub.id, colId, val)}
+                                        onPromote={() => changeParent(sub.id, null)}
                                       />
                                     ))}
                                   </SortableContext>

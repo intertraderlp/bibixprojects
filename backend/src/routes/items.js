@@ -49,6 +49,37 @@ router.put('/:id', authenticate, (req, res) => {
   db.prepare('UPDATE items SET name = COALESCE(?, name), group_id = COALESCE(?, group_id), updated_at = CURRENT_TIMESTAMP WHERE id = ?')
     .run(name || null, group_id || null, req.params.id);
 
+  // Promote / demote: only when the client explicitly sends parent_item_id.
+  // null  -> promote a subtask to a top-level task
+  // <id>  -> demote a task into a subtask of that parent
+  if (Object.prototype.hasOwnProperty.call(req.body, 'parent_item_id')) {
+    const newParent = req.body.parent_item_id || null;
+    if (newParent === req.params.id) {
+      return res.status(400).json({ error: 'An item cannot be its own parent' });
+    }
+    if (newParent) {
+      const parent = db.prepare('SELECT * FROM items WHERE id = ?').get(newParent);
+      if (!parent) return res.status(404).json({ error: 'Parent item not found' });
+      if (parent.board_id !== item.board_id) return res.status(400).json({ error: 'Parent must be on the same board' });
+      // Keep a single level of nesting: no subtasks-of-subtasks, and a task that
+      // already has its own subtasks cannot itself become a subtask.
+      if (parent.parent_item_id) return res.status(400).json({ error: 'Cannot nest under a subtask' });
+      const childCount = db.prepare('SELECT COUNT(*) AS c FROM items WHERE parent_item_id = ?').get(req.params.id).c;
+      if (childCount > 0) return res.status(400).json({ error: 'This task has subtasks — promote or move them first' });
+      // Subtasks live in their parent's group; append to the end of its subtasks.
+      const mp = db.prepare('SELECT MAX(position) AS mp FROM items WHERE group_id = ? AND parent_item_id IS ?').get(parent.group_id, newParent);
+      const pos = (mp?.mp ?? -1) + 1;
+      db.prepare('UPDATE items SET parent_item_id = ?, group_id = ?, position = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(newParent, parent.group_id, pos, req.params.id);
+    } else {
+      // Promote to a top-level task; append to the end of its group's top-level items.
+      const mp = db.prepare('SELECT MAX(position) AS mp FROM items WHERE group_id = ? AND parent_item_id IS NULL').get(item.group_id);
+      const pos = (mp?.mp ?? -1) + 1;
+      db.prepare('UPDATE items SET parent_item_id = NULL, position = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
+        .run(pos, req.params.id);
+    }
+  }
+
   const updated = db.prepare('SELECT * FROM items WHERE id = ?').get(req.params.id);
   res.json(updated);
 });
