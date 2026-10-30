@@ -49,6 +49,7 @@ export interface StatusOption {
 
 export interface ColumnSettings {
   options?: StatusOption[];
+  summary?: string;
 }
 
 export interface Column {

@@ -9,7 +9,7 @@ import {
   horizontalListSortingStrategy, useSortable, arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Plus, ChevronDown, ChevronRight, MoreHorizontal, Trash2, GripVertical, Settings, ChevronUp, Filter, X, ArrowUpAZ, ArrowDownAZ, ArrowUp, ArrowDown } from 'lucide-react';
+import { Plus, ChevronDown, ChevronRight, MoreHorizontal, Trash2, GripVertical, Settings, ChevronUp, Filter, X, ArrowUpAZ, ArrowDownAZ, ArrowUp, ArrowDown, Sigma } from 'lucide-react';
 import { useBoardStore } from '../../store/boardStore';
 import api from '../../api/client';
 import type { Column, Group, Item } from '../../types';
@@ -23,6 +23,52 @@ import toast from 'react-hot-toast';
 const GROUP_COLORS = ['#0073ea','#e2445c','#00c875','#fdab3d','#a25ddc','#037f4c','#bb3354','#ff642e'];
 const NAME_COL_WIDTH = 300;
 const DEFAULT_COL_WIDTH = 140;
+
+// ─── Column summaries ────────────────────────────────────────────────────────
+type SummaryType = 'sum' | 'avg' | 'min' | 'max' | 'count' | 'empty' | 'pct_checked' | 'checked' | 'breakdown';
+
+const SUMMARY_LABELS: Record<SummaryType, string> = {
+  sum: 'Sum', avg: 'Average', min: 'Min', max: 'Max', count: 'Count filled', empty: 'Count empty',
+  pct_checked: '% checked', checked: 'Checked', breakdown: 'Breakdown',
+};
+
+function summaryOptionsFor(type: string): SummaryType[] {
+  if (type === 'number') return ['sum', 'avg', 'min', 'max', 'count', 'empty'];
+  if (type === 'checkbox') return ['pct_checked', 'checked', 'empty'];
+  if (type === 'status' || type === 'priority') return ['count', 'empty', 'breakdown'];
+  return ['count', 'empty'];
+}
+
+function fmtNum(n: number): string {
+  return (Math.round(n * 100) / 100).toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function computeSummary(s: SummaryType, values: (string | null)[]): string {
+  const total = values.length;
+  const filled = values.filter(v => v != null && String(v).trim() !== '');
+  switch (s) {
+    case 'count': return String(filled.length);
+    case 'empty': return String(total - filled.length);
+    case 'checked': { const c = values.filter(v => v === 'true').length; return `${c}/${total}`; }
+    case 'pct_checked': { const c = values.filter(v => v === 'true').length; return total ? `${Math.round((c / total) * 100)}%` : '0%'; }
+    case 'breakdown': {
+      const counts: Record<string, number> = {};
+      filled.forEach(v => { counts[v as string] = (counts[v as string] || 0) + 1; });
+      const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+      const top = entries.slice(0, 3).map(([k, n]) => `${k} ${n}`).join(' · ');
+      return entries.length > 3 ? `${top} +${entries.length - 3}` : top;
+    }
+    default: {
+      const nums = filled.map(v => Number(v)).filter(n => !isNaN(n));
+      if (!nums.length) return '—';
+      if (s === 'sum') return fmtNum(nums.reduce((a, b) => a + b, 0));
+      if (s === 'avg') return fmtNum(nums.reduce((a, b) => a + b, 0) / nums.length);
+      if (s === 'min') return fmtNum(Math.min(...nums));
+      if (s === 'max') return fmtNum(Math.max(...nums));
+      return '';
+    }
+  }
+}
 const MIN_COL_WIDTH = 80;
 
 function OptionFilterDropdown({ opts, value, onChange }: {
@@ -106,14 +152,16 @@ function OptionFilterDropdown({ opts, value, onChange }: {
 
 // ─── Sortable wrappers ───────────────────────────────────────────────────────
 
-function SortableColumnHeader({ col, width, sortDir, onResize, onSettings, onDelete, onSort, onFilterOpen }: {
+function SortableColumnHeader({ col, width, sortDir, onResize, onSettings, onDelete, onSort, onFilterOpen, onSummarize }: {
   col: Column; width: number; sortDir?: 'asc' | 'desc' | null;
   onResize: (colId: string, e: React.PointerEvent) => void;
   onSettings: (col: Column) => void;
   onDelete: (col: Column) => void;
   onSort: (colId: string, dir: 'asc' | 'desc') => void;
   onFilterOpen: (colId: string) => void;
+  onSummarize: (col: Column, s: SummaryType | null) => void;
 }) {
+  const curSummary = (col.settings as { summary?: SummaryType })?.summary;
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: col.id, data: { type: 'column' } });
   return (
     <div ref={setNodeRef} style={{ width, minWidth: width, transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }}
@@ -134,6 +182,15 @@ function SortableColumnHeader({ col, width, sortDir, onResize, onSettings, onDel
         <DropdownItem onClick={() => onSort(col.id, 'asc')}><ArrowUpAZ size={13} /> Sort A → Z</DropdownItem>
         <DropdownItem onClick={() => onSort(col.id, 'desc')}><ArrowDownAZ size={13} /> Sort Z → A</DropdownItem>
         <DropdownItem onClick={() => onFilterOpen(col.id)}><Filter size={13} /> Filter by this column</DropdownItem>
+        <div className="border-t border-gray-100 my-1" />
+        <div className="px-4 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Summarize</div>
+        {summaryOptionsFor(col.type).map(s => (
+          <DropdownItem key={s} onClick={() => onSummarize(col, s)}>
+            <Sigma size={13} /> <span className="flex-1">{SUMMARY_LABELS[s]}</span>
+            {curSummary === s && <span className="text-monday-blue">✓</span>}
+          </DropdownItem>
+        ))}
+        {curSummary && <DropdownItem onClick={() => onSummarize(col, null)}><X size={13} /> Clear summary</DropdownItem>}
         <div className="border-t border-gray-100 my-1" />
         <DropdownItem onClick={() => onSettings(col)}><Settings size={13} /> Edit Column</DropdownItem>
         <DropdownItem danger onClick={() => onDelete(col)}><Trash2 size={13} /> Delete</DropdownItem>
@@ -288,7 +345,13 @@ function SortableItemRow({ item, group, columns, board, colWidths, onOpen, onDel
 
 export default function TableView() {
   const store = useBoardStore();
-  const { board, addItem, deleteItem, updateItem, addGroup, updateGroup, deleteGroup, updateItemValue, deleteColumn, reorderGroups, reorderItems, reorderColumns } = store;
+  const { board, addItem, deleteItem, updateItem, addGroup, updateGroup, deleteGroup, updateItemValue, updateColumn, deleteColumn, reorderGroups, reorderItems, reorderColumns, getValue } = store;
+
+  // Set or clear a column's summary (stored inside the column's settings blob).
+  const handleSummarize = (col: Column, s: SummaryType | null) => {
+    const settings = { ...(col.settings || {}), summary: s || undefined };
+    updateColumn(col.id, { settings } as never);
+  };
 
   // Promote a subtask to a top-level task, or demote a task into a subtask.
   const changeParent = async (id: string, parentId: string | null) => {
@@ -590,6 +653,7 @@ export default function TableView() {
                               onDelete={c => { if (confirm(`Delete "${c.name}"?`)) deleteColumn(c.id); }}
                               onSort={handleSort}
                               onFilterOpen={handleFilterOpen}
+                              onSummarize={handleSummarize}
                             />
                           ))}
                         </SortableContext>
@@ -763,6 +827,30 @@ export default function TableView() {
                             className="sticky left-0 flex items-center gap-2 text-xs text-gray-400 hover:text-monday-blue py-1.5 px-4 bg-white">
                             <Plus size={13} /> Add Item
                           </button>
+                        </div>
+                      )}
+
+                      {/* Summary footer — per-column totals over the whole group */}
+                      {sortedColumns.some(c => (c.settings as { summary?: SummaryType })?.summary) && (
+                        <div className="flex border-t-2 border-gray-200 bg-gray-50/80 text-xs">
+                          <div className="sticky left-0 z-10 flex items-center border-r border-gray-200 h-8 flex-shrink-0 bg-gray-50 font-medium text-gray-500 px-4" style={{ width: NAME_COL_WIDTH }}>
+                            Summary
+                          </div>
+                          {sortedColumns.map(col => {
+                            const w = colWidths[col.id] || DEFAULT_COL_WIDTH;
+                            const s = (col.settings as { summary?: SummaryType })?.summary;
+                            const text = s ? computeSummary(s, filteredItems.map(it => getValue(it.id, col.id))) : '';
+                            return (
+                              <div key={col.id} style={{ width: w, minWidth: w }}
+                                className="h-8 border-r border-gray-100 flex-shrink-0 flex flex-col items-center justify-center px-2 overflow-hidden">
+                                {s && <>
+                                  <span className="font-semibold text-gray-700 truncate max-w-full leading-tight">{text}</span>
+                                  <span className="text-[10px] text-gray-400 leading-tight">{SUMMARY_LABELS[s]}</span>
+                                </>}
+                              </div>
+                            );
+                          })}
+                          <div className="flex-1" />
                         </div>
                       )}
                     </>
