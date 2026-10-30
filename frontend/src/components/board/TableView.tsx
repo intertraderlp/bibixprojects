@@ -9,7 +9,7 @@ import {
   horizontalListSortingStrategy, useSortable, arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Plus, ChevronDown, ChevronRight, MoreHorizontal, Trash2, GripVertical, Settings, ChevronUp, Filter, X, ArrowUpAZ, ArrowDownAZ, ArrowUp, ArrowDown, Sigma, Zap, Sparkles } from 'lucide-react';
+import { Plus, ChevronDown, ChevronRight, MoreHorizontal, Trash2, GripVertical, Settings, ChevronUp, Filter, X, ArrowUpAZ, ArrowDownAZ, ArrowUp, ArrowDown, Sigma, Zap, Sparkles, ExternalLink } from 'lucide-react';
 import { totalSecondsFromRaw, formatHMS } from '../../lib/timeTracking';
 import { useBoardStore } from '../../store/boardStore';
 import api from '../../api/client';
@@ -408,9 +408,33 @@ export default function TableView() {
   const setGroupSelected = (ids: string[], on: boolean) => setSelected(s => {
     const n = new Set(s); ids.forEach(id => on ? n.add(id) : n.delete(id)); return n;
   });
-  const clearSelection = () => { setSelected(new Set()); setBulkColId(''); setBulkValue(''); };
+  const [openColId, setOpenColId] = useState('');
+  const clearSelection = () => { setSelected(new Set()); setBulkColId(''); setBulkValue(''); setOpenColId(''); };
 
   const bulkCol = board?.columns.find(c => c.id === bulkColId) || null;
+
+  // Columns whose cells may hold a URL to open in bulk.
+  const linkableCols = (board?.columns || []).filter(c => c.type === 'link' || c.type === 'text');
+
+  // Turn a cell value into an openable URL, or '' if it isn't one.
+  const toUrl = (raw: unknown): string => {
+    const s = String(raw ?? '').trim();
+    if (!s) return '';
+    if (/^https?:\/\//i.test(s)) return s;
+    if (/^[\w-]+(\.[\w-]+)+(\/|\?|#|$)/.test(s)) return 'https://' + s; // bare domain like foo.com/x
+    return '';
+  };
+
+  const bulkOpenLinks = () => {
+    if (!openColId || selected.size === 0) return;
+    const urls = [...selected].map(id => toUrl(getValue(id, openColId))).filter(Boolean);
+    const unique = [...new Set(urls)];
+    if (unique.length === 0) { toast.error('No links found in that field for the selected items'); return; }
+    if (unique.length > 10 && !confirm(`Open ${unique.length} tabs? Your browser may ask to allow multiple pop-ups.`)) return;
+    unique.forEach(u => window.open(u, '_blank', 'noopener,noreferrer'));
+    const skipped = selected.size - urls.length;
+    toast.success(`Opened ${unique.length} link${unique.length > 1 ? 's' : ''}${skipped > 0 ? ` · ${skipped} item${skipped > 1 ? 's' : ''} had none` : ''}`);
+  };
 
   const applyBulkValue = async () => {
     if (!bulkColId || selected.size === 0) return;
@@ -1039,6 +1063,23 @@ export default function TableView() {
             className="text-sm bg-monday-blue text-white px-3 py-1.5 rounded-lg hover:bg-blue-600 disabled:opacity-40">
             {bulkBusy ? 'Applying…' : 'Apply'}
           </button>
+
+          {linkableCols.length > 0 && (
+            <>
+              <div className="h-5 w-px bg-gray-200" />
+              <span className="text-sm text-gray-500">Open links from</span>
+              <select value={openColId} onChange={e => setOpenColId(e.target.value)}
+                className="text-sm border border-gray-300 rounded-lg px-2 py-1.5 max-w-[150px]">
+                <option value="">field…</option>
+                {linkableCols.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <button onClick={bulkOpenLinks} disabled={!openColId}
+                className="flex items-center gap-1 text-sm bg-gray-100 text-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-200 disabled:opacity-40">
+                <ExternalLink size={14} /> Open
+              </button>
+            </>
+          )}
+
           <div className="h-5 w-px bg-gray-200" />
           <button onClick={bulkDelete} disabled={bulkBusy}
             className="flex items-center gap-1 text-sm text-red-600 hover:bg-red-50 px-2.5 py-1.5 rounded-lg disabled:opacity-40">
