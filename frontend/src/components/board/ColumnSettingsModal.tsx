@@ -7,6 +7,7 @@ import {
 import { useBoardStore } from '../../store/boardStore';
 import type { Column, ColumnType, StatusOption } from '../../types';
 import Modal from '../ui/Modal';
+import FormulaEditor from './FormulaEditor';
 import toast from 'react-hot-toast';
 
 interface Props { column: Column; onClose: () => void; }
@@ -238,30 +239,7 @@ export default function ColumnSettingsModal({ column, onClose }: Props) {
             <label className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wider">
               Formula
             </label>
-            <textarea
-              value={formula}
-              onChange={e => setFormula(e.target.value)}
-              rows={3}
-              placeholder="{Price} * {Qty} * (1 - {Discount}/100)"
-              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-monday-blue"
-            />
-            <p className="text-xs text-gray-500 mt-2">
-              Reference columns with <code className="bg-gray-100 px-1 rounded">{'{Column name}'}</code>. Operators: <code className="bg-gray-100 px-1 rounded">+ - * / %  &gt; &lt; == != &amp;&amp; ||</code>, ternary <code className="bg-gray-100 px-1 rounded">cond ? a : b</code>. Functions: <code className="bg-gray-100 px-1 rounded">IF ROUND ABS MIN MAX SUM AVG CONCAT UPPER LOWER LEN</code>.
-            </p>
-            {otherColumns.length > 0 && (
-              <div className="mt-2">
-                <span className="text-[11px] text-gray-400 uppercase tracking-wide">Insert column</span>
-                <div className="flex flex-wrap gap-1.5 mt-1">
-                  {otherColumns.map(c => (
-                    <button key={c.id} type="button"
-                      onClick={() => setFormula(f => `${f}{${c.name}}`)}
-                      className="text-xs px-2 py-1 rounded border border-gray-200 text-gray-600 hover:border-monday-blue hover:text-monday-blue">
-                      {c.name}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
+            <FormulaEditor value={formula} onChange={setFormula} columns={otherColumns} />
           </div>
         )}
 
