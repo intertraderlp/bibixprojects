@@ -38,7 +38,7 @@ interface BoardState {
   addGroup: (name: string, color?: string) => Promise<void>;
   updateGroup: (groupId: string, data: Partial<Group>) => Promise<void>;
   deleteGroup: (groupId: string) => Promise<void>;
-  addColumn: (name: string, type: ColumnType) => Promise<void>;
+  addColumn: (name: string, type: ColumnType, settings?: Record<string, unknown>) => Promise<void>;
   updateColumn: (columnId: string, data: Partial<Column>) => Promise<void>;
   deleteColumn: (columnId: string) => Promise<void>;
   updateBoard: (data: { name?: string; description?: string; icon?: string }) => Promise<void>;
@@ -207,9 +207,9 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     });
   },
 
-  addColumn: async (name, type) => {
+  addColumn: async (name, type, settings) => {
     if (!get().board) return;
-    const { data } = await api.post('/columns', { board_id: get().board!.id, name, type });
+    const { data } = await api.post('/columns', { board_id: get().board!.id, name, type, ...(settings ? { settings } : {}) });
     set(state => {
       if (!state.board) return state;
       return { board: { ...state.board, columns: [...state.board.columns, data] } };

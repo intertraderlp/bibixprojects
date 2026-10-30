@@ -40,7 +40,7 @@ export interface UserGroup {
   created_at?: string;
 }
 
-export type ColumnType = 'text' | 'status' | 'person' | 'date' | 'number' | 'checkbox' | 'tags' | 'priority' | 'link' | 'timeline' | 'attachments';
+export type ColumnType = 'text' | 'status' | 'person' | 'date' | 'number' | 'checkbox' | 'tags' | 'priority' | 'link' | 'timeline' | 'attachments' | 'formula';
 
 export interface StatusOption {
   label: string;
@@ -50,6 +50,7 @@ export interface StatusOption {
 export interface ColumnSettings {
   options?: StatusOption[];
   summary?: string;
+  formula?: string;
 }
 
 export interface Column {

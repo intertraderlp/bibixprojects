@@ -2,7 +2,7 @@ import { useState } from 'react';
 import {
   Plus, Trash2, GripVertical, AlertTriangle,
   Type, Star, Flag, User, Calendar, Hash, CheckSquare,
-  Tag, Link, Paperclip, ArrowRight,
+  Tag, Link, Paperclip, ArrowRight, Calculator,
 } from 'lucide-react';
 import { useBoardStore } from '../../store/boardStore';
 import type { Column, ColumnType, StatusOption } from '../../types';
@@ -25,6 +25,7 @@ const COLUMN_TYPES: { type: ColumnType; label: string; icon: React.ReactNode }[]
   { type: 'timeline',    label: 'Timeline',    icon: <ArrowRight size={14} />  },
   { type: 'person',      label: 'Person',      icon: <User size={14} />        },
   { type: 'attachments', label: 'Attachments', icon: <Paperclip size={14} />   },
+  { type: 'formula',     label: 'Formula',     icon: <Calculator size={14} />  },
 ];
 
 // ── Default options for status/priority ───────────────────────────────────────
@@ -53,10 +54,11 @@ const PRESET_COLORS = [
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function ColumnSettingsModal({ column, onClose }: Props) {
-  const { updateColumn } = useBoardStore();
+  const { updateColumn, board } = useBoardStore();
 
   const [name, setName]       = useState(column.name);
   const [type, setType]       = useState<ColumnType>(column.type);
+  const [formula, setFormula] = useState<string>((column.settings as { formula?: string })?.formula || '');
   const [options, setOptions] = useState<StatusOption[]>(
     Array.isArray(column.settings?.options) ? [...column.settings.options] : []
   );
@@ -64,6 +66,8 @@ export default function ColumnSettingsModal({ column, onClose }: Props) {
 
   const typeChanged    = type !== column.type;
   const isOptionType   = type === 'status' || type === 'priority';
+  const isFormula      = type === 'formula';
+  const otherColumns   = (board?.columns || []).filter(c => c.id !== column.id);
 
   // When user picks a new type, seed default options if switching TO status/priority
   const handleTypeChange = (newType: ColumnType) => {
@@ -95,7 +99,7 @@ export default function ColumnSettingsModal({ column, onClose }: Props) {
       await updateColumn(column.id, {
         name:     name.trim() || column.name,
         type,
-        settings: isOptionType ? { ...column.settings, options } : {},
+        settings: isFormula ? { formula } : isOptionType ? { ...column.settings, options } : {},
       });
       toast.success('Column updated');
       onClose();
@@ -225,6 +229,39 @@ export default function ColumnSettingsModal({ column, onClose }: Props) {
             >
               <Plus size={15} /> Add Option
             </button>
+          </div>
+        )}
+
+        {/* ── Formula editor ─────────────────────────────────────────────── */}
+        {isFormula && (
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wider">
+              Formula
+            </label>
+            <textarea
+              value={formula}
+              onChange={e => setFormula(e.target.value)}
+              rows={3}
+              placeholder="{Price} * {Qty} * (1 - {Discount}/100)"
+              className="w-full border border-gray-300 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none focus:ring-2 focus:ring-monday-blue"
+            />
+            <p className="text-xs text-gray-500 mt-2">
+              Reference columns with <code className="bg-gray-100 px-1 rounded">{'{Column name}'}</code>. Operators: <code className="bg-gray-100 px-1 rounded">+ - * / %  &gt; &lt; == != &amp;&amp; ||</code>, ternary <code className="bg-gray-100 px-1 rounded">cond ? a : b</code>. Functions: <code className="bg-gray-100 px-1 rounded">IF ROUND ABS MIN MAX SUM AVG CONCAT UPPER LOWER LEN</code>.
+            </p>
+            {otherColumns.length > 0 && (
+              <div className="mt-2">
+                <span className="text-[11px] text-gray-400 uppercase tracking-wide">Insert column</span>
+                <div className="flex flex-wrap gap-1.5 mt-1">
+                  {otherColumns.map(c => (
+                    <button key={c.id} type="button"
+                      onClick={() => setFormula(f => `${f}{${c.name}}`)}
+                      className="text-xs px-2 py-1 rounded border border-gray-200 text-gray-600 hover:border-monday-blue hover:text-monday-blue">
+                      {c.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         )}
 
