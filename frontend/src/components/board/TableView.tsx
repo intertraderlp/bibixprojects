@@ -262,7 +262,7 @@ function SortableGroupHeader({ group, itemCount, collapsed, filterActive, onTogg
   );
 }
 
-function SortableItemRow({ item, group, columns, board, colWidths, onOpen, onDelete, onValueChange, isSubtask, subtaskCount, expanded, onToggleExpand, onAddSubtask, onPromote, onDemote, demoteTargets, hasSubtasks, templates, onRunTemplate }: {
+function SortableItemRow({ item, group, columns, board, colWidths, onOpen, onDelete, onValueChange, isSubtask, subtaskCount, expanded, onToggleExpand, onAddSubtask, onPromote, onDemote, demoteTargets, hasSubtasks, templates, onRunTemplate, selected, onToggleSelect }: {
   item: Item; group: Group; columns: Column[];
   board: { workspace_id: string }; colWidths: Record<string, number>;
   onOpen: () => void; onDelete: () => void;
