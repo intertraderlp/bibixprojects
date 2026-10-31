@@ -178,12 +178,15 @@ async function refreshOutreachSummary() {
   if (el) el.textContent = 'Checking your campaigns…';
   const res = await send('outreachSummary');
   if (!res.ok) { if (el) el.textContent = res.error || 'Could not load campaigns.'; return; }
-  const d = res.data || {};
+  // The background proxy wraps the JSON body in { ok, data }, and the endpoint
+  // itself returns { ok, data:{…} } — so the real payload is res.data.data.
+  const d = (res.data && res.data.data) ? res.data.data : (res.data || {});
+  const camps = d.campaigns || [];
   if (el) {
     el.textContent = d.ready > 0
-      ? `${d.ready} prospect${d.ready === 1 ? '' : 's'} ready to invite across ${d.campaigns.length} active campaign${d.campaigns.length === 1 ? '' : 's'}.`
-      : (d.campaigns.length
-        ? 'No prospects left within today’s limits. Raise a limit or add prospects in Monday.'
+      ? `${d.ready} prospect${d.ready === 1 ? '' : 's'} ready to invite across ${camps.length} active campaign${camps.length === 1 ? '' : 's'}.`
+      : (camps.length
+        ? 'No prospects to invite right now (check daily limits, or each prospect has a LinkedIn URL).'
         : 'No active campaigns. Set a campaign to “Active” in Monday → LinkedIn → Outreach.');
   }
   const st = await send('outreachState');
