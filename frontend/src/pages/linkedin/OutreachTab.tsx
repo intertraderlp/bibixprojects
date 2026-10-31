@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Plus, ArrowLeft, Trash2, ExternalLink, Users, LayoutGrid, ClipboardPaste,
-  Sparkles, Eye, Check, X, Send, UserPlus, RefreshCw,
+  Plus, ArrowLeft, Trash2, ExternalLink, Users, LayoutGrid, ClipboardPaste, UserPlus2,
+  Sparkles, Eye, Check, X, Send, UserPlus, RefreshCw, Shuffle, Filter as FilterIcon,
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 import api from '../../api/client';
@@ -9,7 +9,7 @@ import api from '../../api/client';
 // ── Types ─────────────────────────────────────────────────────────────────────
 type Status = 'queued' | 'invited' | 'accepted' | 'messaged' | 'replied' | 'skipped' | 'failed';
 
-interface Step { id?: string; step_index?: number; delay_days: number; body: string; }
+interface Step { id?: string; step_index?: number; delay_days: number; variants: string[]; }
 interface Target {
   id: string; name: string | null; headline: string | null; company: string | null;
   linkedin_url: string | null; source: string; status: Status; next_step: number;
@@ -17,9 +17,8 @@ interface Target {
 }
 interface Campaign {
   id: string; name: string; status: 'draft' | 'active' | 'paused';
-  connect_note: string; follow_too: number; message_mode: 'single' | 'sequence';
-  daily_limit: number; min_delay_sec: number; max_delay_sec: number;
-  ai_instruction: string | null;
+  connect_note: string; note_variants: string[]; follow_too: number;
+  message_mode: 'single' | 'sequence'; daily_limit: number; ai_instruction: string | null;
   counts?: Record<string, number>; total?: number;
   steps?: Step[]; targets?: Target[];
 }
@@ -56,9 +55,9 @@ export default function OutreachTab() {
     try {
       const r = await api.post('/outreach/campaigns', {
         name,
-        connect_note: 'Hi {{FirstName}}, I came across your profile and would love to connect.',
+        note_variants: ['Hi {{FirstName}}, I came across your profile and would love to connect.'],
         message_mode: 'single',
-        steps: [{ delay_days: 0, body: 'Thanks for connecting, {{FirstName}}! [[AI: write one friendly sentence referencing their role]]' }],
+        steps: [{ delay_days: 0, variants: ['Thanks for connecting, {{FirstName}}! [[AI: write one friendly sentence referencing their role]]'] }],
       });
       await loadCampaigns();
       setOpenId(r.data.data.id);
@@ -121,7 +120,7 @@ function StatusPill({ status }: { status: string }) {
 function CampaignDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const [c, setC] = useState<Campaign | null>(null);
   const [saving, setSaving] = useState(false);
-  const [addMode, setAddMode] = useState<null | 'candidates' | 'board' | 'paste'>(null);
+  const [addMode, setAddMode] = useState<null | 'candidates' | 'board' | 'paste' | 'person'>(null);
 
   const load = async () => {
     try { const r = await api.get(`/outreach/campaigns/${id}`); setC(r.data.data); }
@@ -134,14 +133,14 @@ function CampaignDetail({ id, onBack }: { id: string; onBack: () => void }) {
   const update = (patch: Partial<Campaign>) => setC(prev => prev ? { ...prev, ...patch } : prev);
   const updateStep = (i: number, patch: Partial<Step>) =>
     setC(prev => prev ? { ...prev, steps: (prev.steps || []).map((s, j) => j === i ? { ...s, ...patch } : s) } : prev);
-  const addStep = () => setC(prev => prev ? { ...prev, steps: [...(prev.steps || []), { delay_days: 2, body: '' }] } : prev);
+  const addStep = () => setC(prev => prev ? { ...prev, steps: [...(prev.steps || []), { delay_days: 2, variants: [''] }] } : prev);
   const removeStep = (i: number) => setC(prev => prev ? { ...prev, steps: (prev.steps || []).filter((_, j) => j !== i) } : prev);
 
   const save = async () => {
     setSaving(true);
     try {
       await api.put(`/outreach/campaigns/${id}`, {
-        name: c.name, status: c.status, connect_note: c.connect_note, follow_too: c.follow_too,
+        name: c.name, status: c.status, note_variants: c.note_variants, follow_too: c.follow_too,
         message_mode: c.message_mode, daily_limit: c.daily_limit, ai_instruction: c.ai_instruction,
         steps: c.message_mode === 'single' ? (c.steps || []).slice(0, 1) : c.steps,
       });
@@ -185,12 +184,11 @@ function CampaignDetail({ id, onBack }: { id: string; onBack: () => void }) {
         className="text-xl font-bold text-gray-900 w-full outline-none border-b border-transparent focus:border-gray-300 pb-1" />
 
       {/* Connect note */}
-      <Section title="Connection request note" subtitle="Sent with the invite. LinkedIn free accounts limit notes to ~200 characters.">
-        <TokenBar onInsert={tok => update({ connect_note: (c.connect_note || '') + tok })} />
-        <textarea value={c.connect_note || ''} onChange={e => update({ connect_note: e.target.value })} rows={3}
-          className="w-full text-sm border border-gray-300 rounded-lg p-3 resize-y" placeholder="Hi {{FirstName}}, …" />
-        <div className="text-xs text-gray-400 mt-1">{(c.connect_note || '').length} chars</div>
-        <label className="flex items-center gap-2 text-sm text-gray-600 mt-2">
+      <Section title="Connection request note"
+        subtitle="Sent with the invite. Add several variants — Bibix rotates them so it doesn't look automated. LinkedIn limits free-account notes to ~200 chars.">
+        <VariantList variants={c.note_variants?.length ? c.note_variants : ['']}
+          onChange={v => update({ note_variants: v })} maxChars={200} />
+        <label className="flex items-center gap-2 text-sm text-gray-600 mt-3">
           <input type="checkbox" checked={!!c.follow_too} onChange={e => update({ follow_too: e.target.checked ? 1 : 0 })} />
           Also follow each prospect (optional — following doesn't enable messaging)
         </label>
@@ -198,7 +196,7 @@ function CampaignDetail({ id, onBack }: { id: string; onBack: () => void }) {
 
       {/* Messages */}
       <Section title="Messages after they accept"
-        subtitle="Only sent once a prospect accepts your connection (becomes a 1st-degree connection).">
+        subtitle="Only sent once a prospect accepts your connection. Multiple variants per message rotate to avoid detection.">
         <div className="flex gap-2 mb-3">
           {(['single', 'sequence'] as const).map(m => (
             <button key={m} onClick={() => update({ message_mode: m })}
@@ -227,10 +225,8 @@ function CampaignDetail({ id, onBack }: { id: string; onBack: () => void }) {
                   )}
                 </div>
               </div>
-              <TokenBar onInsert={tok => updateStep(i, { body: (s.body || '') + tok })} withAi />
-              <textarea value={s.body} onChange={e => updateStep(i, { body: e.target.value })} rows={3}
-                className="w-full text-sm border border-gray-300 rounded-lg p-3 resize-y"
-                placeholder="Thanks for connecting, {{FirstName}}! …" />
+              <VariantList variants={s.variants?.length ? s.variants : ['']}
+                onChange={v => updateStep(i, { variants: v })} withAi />
             </div>
           ))}
           {c.message_mode === 'sequence' && (
@@ -258,11 +254,12 @@ function CampaignDetail({ id, onBack }: { id: string; onBack: () => void }) {
 
       {/* Prospects */}
       <Section title={`Prospects (${c.targets?.length || 0})`}
-        subtitle="Add from your saved candidates, a board, or paste a list.">
+        subtitle="Add from your saved candidates, a board (with group + filters), a pasted list, or one by one.">
         <div className="flex flex-wrap gap-2 mb-4">
-          <AddBtn icon={<Users size={14} />} label="From Candidates" onClick={() => setAddMode('candidates')} />
-          <AddBtn icon={<LayoutGrid size={14} />} label="From a board" onClick={() => setAddMode('board')} />
-          <AddBtn icon={<ClipboardPaste size={14} />} label="Paste a list" onClick={() => setAddMode('paste')} />
+          <AddBtn icon={<Users size={14} />} label="From Candidates" active={addMode === 'candidates'} onClick={() => setAddMode(addMode === 'candidates' ? null : 'candidates')} />
+          <AddBtn icon={<LayoutGrid size={14} />} label="From a board" active={addMode === 'board'} onClick={() => setAddMode(addMode === 'board' ? null : 'board')} />
+          <AddBtn icon={<ClipboardPaste size={14} />} label="Paste a list" active={addMode === 'paste'} onClick={() => setAddMode(addMode === 'paste' ? null : 'paste')} />
+          <AddBtn icon={<UserPlus2 size={14} />} label="Add person" active={addMode === 'person'} onClick={() => setAddMode(addMode === 'person' ? null : 'person')} />
           <button onClick={load} className="ml-auto text-sm text-gray-500 flex items-center gap-1 hover:text-gray-800">
             <RefreshCw size={14} /> Refresh
           </button>
@@ -271,6 +268,7 @@ function CampaignDetail({ id, onBack }: { id: string; onBack: () => void }) {
         {addMode === 'candidates' && <AddFromCandidates campaignId={id} onDone={() => { setAddMode(null); load(); }} onCancel={() => setAddMode(null)} />}
         {addMode === 'board' && <AddFromBoard campaignId={id} onDone={() => { setAddMode(null); load(); }} onCancel={() => setAddMode(null)} />}
         {addMode === 'paste' && <AddFromPaste campaignId={id} onDone={() => { setAddMode(null); load(); }} onCancel={() => setAddMode(null)} />}
+        {addMode === 'person' && <AddPerson campaignId={id} onDone={() => { setAddMode(null); load(); }} onCancel={() => setAddMode(null)} />}
 
         <TargetsTable campaign={c} onChanged={load} />
       </Section>
@@ -278,23 +276,68 @@ function CampaignDetail({ id, onBack }: { id: string; onBack: () => void }) {
   );
 }
 
+// ── Variant list editor (rotating templates) ─────────────────────────────────
+function VariantList({ variants, onChange, withAi, maxChars }:
+  { variants: string[]; onChange: (v: string[]) => void; withAi?: boolean; maxChars?: number }) {
+  const set = (i: number, val: string) => onChange(variants.map((v, j) => j === i ? val : v));
+  const insert = (i: number, tok: string) => set(i, (variants[i] || '') + tok);
+  const add = () => onChange([...variants, '']);
+  const remove = (i: number) => onChange(variants.filter((_, j) => j !== i));
+  return (
+    <div className="space-y-2">
+      {variants.map((v, i) => (
+        <div key={i} className="rounded-lg border border-gray-200 p-2">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-[11px] font-medium text-gray-400 flex items-center gap-1">
+              {variants.length > 1 && <Shuffle size={11} />} Variant {i + 1}{variants.length > 1 ? ` of ${variants.length}` : ''}
+            </span>
+            {variants.length > 1 && (
+              <button onClick={() => remove(i)} className="text-gray-300 hover:text-red-500"><X size={13} /></button>
+            )}
+          </div>
+          <TokenBar onInsert={tok => insert(i, tok)} withAi={withAi} />
+          <textarea value={v} onChange={e => set(i, e.target.value)} rows={3}
+            className="w-full text-sm border border-gray-300 rounded-lg p-2.5 resize-y"
+            placeholder="Hi {{FirstName}}, …" />
+          {maxChars && (
+            <div className={`text-xs mt-0.5 ${(v || '').length > maxChars ? 'text-red-500' : 'text-gray-400'}`}>
+              {(v || '').length}/{maxChars} chars
+            </div>
+          )}
+        </div>
+      ))}
+      <button onClick={add} className="text-sm text-[#0a66c2] flex items-center gap-1"><Plus size={13} /> Add variant</button>
+    </div>
+  );
+}
+
 // ── Prospects table ───────────────────────────────────────────────────────────
 function TargetsTable({ campaign, onChanged }: { campaign: Campaign; onChanged: () => void }) {
   const [preview, setPreview] = useState<{ title: string; text: string } | null>(null);
+  const [sel, setSel] = useState<Set<string>>(new Set());
   const targets = campaign.targets || [];
+
+  const toggle = (id: string) => setSel(s => { const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n; });
+  const allOn = targets.length > 0 && sel.size === targets.length;
 
   const setStatus = async (t: Target, status: Status) => {
     try { await api.put(`/outreach/targets/${t.id}`, { status }); onChanged(); }
     catch { toast.error('Update failed'); }
   };
   const del = async (t: Target) => { await api.delete(`/outreach/targets/${t.id}`); onChanged(); };
+  const bulkDelete = async () => {
+    if (!sel.size || !confirm(`Remove ${sel.size} prospect(s) from this campaign?`)) return;
+    for (const id of sel) await api.delete(`/outreach/targets/${id}`);
+    setSel(new Set()); onChanged();
+  };
 
   const showPreview = async (t: Target, kind: 'note' | 'message') => {
     const tid = toast.loading('Generating…');
     try {
       const r = await api.post(`/outreach/targets/${t.id}/preview`, { kind, step_index: 0 });
       toast.dismiss(tid);
-      setPreview({ title: `${kind === 'note' ? 'Connection note' : 'First message'} — ${t.name || 'prospect'}`, text: r.data.text || '(empty template)' });
+      const vc = r.data.variant_count > 1 ? ` (1 of ${r.data.variant_count} variants)` : '';
+      setPreview({ title: `${kind === 'note' ? 'Connection note' : 'First message'}${vc} — ${t.name || 'prospect'}`, text: r.data.text || '(empty template)' });
     } catch (e: any) { toast.dismiss(tid); toast.error(e?.response?.data?.error || 'Preview failed'); }
   };
 
@@ -302,9 +345,18 @@ function TargetsTable({ campaign, onChanged }: { campaign: Campaign; onChanged: 
 
   return (
     <div className="border border-gray-200 rounded-lg overflow-hidden">
+      {sel.size > 0 && (
+        <div className="flex items-center gap-3 bg-[#0a66c2]/5 px-3 py-2 text-sm">
+          <span className="font-medium text-gray-700">{sel.size} selected</span>
+          <button onClick={bulkDelete} className="text-red-600 flex items-center gap-1 hover:underline"><Trash2 size={13} /> Remove</button>
+          <button onClick={() => setSel(new Set())} className="text-gray-500 hover:underline ml-auto">Clear</button>
+        </div>
+      )}
       <table className="w-full text-sm">
         <thead className="bg-gray-50 text-gray-500 text-xs">
           <tr>
+            <th className="w-8 px-3 py-2"><input type="checkbox" checked={allOn}
+              onChange={() => setSel(allOn ? new Set() : new Set(targets.map(t => t.id)))} /></th>
             <th className="text-left font-medium px-3 py-2">Prospect</th>
             <th className="text-left font-medium px-3 py-2">Status</th>
             <th className="text-right font-medium px-3 py-2">Actions</th>
@@ -313,6 +365,7 @@ function TargetsTable({ campaign, onChanged }: { campaign: Campaign; onChanged: 
         <tbody>
           {targets.map(t => (
             <tr key={t.id} className="border-t border-gray-100">
+              <td className="px-3 py-2"><input type="checkbox" checked={sel.has(t.id)} onChange={() => toggle(t.id)} /></td>
               <td className="px-3 py-2">
                 <div className="font-medium text-gray-800">{t.name || '—'}</div>
                 <div className="text-xs text-gray-400 truncate max-w-[280px]">{[t.headline, t.company].filter(Boolean).join(' · ')}</div>
@@ -330,7 +383,6 @@ function TargetsTable({ campaign, onChanged }: { campaign: Campaign; onChanged: 
                     className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded"><Eye size={14} /></button>
                   <button title="Preview first message" onClick={() => showPreview(t, 'message')}
                     className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-gray-100 rounded"><Sparkles size={14} /></button>
-                  {/* Assist-mode status advance */}
                   {t.status === 'queued' && (
                     <button title="Mark invited" onClick={() => setStatus(t, 'invited')}
                       className="p-1.5 text-blue-500 hover:bg-blue-50 rounded"><UserPlus size={14} /></button>
@@ -374,7 +426,28 @@ function TargetsTable({ campaign, onChanged }: { campaign: Campaign; onChanged: 
   );
 }
 
-// ── Add sources ────────────────────────────────────────────────────────────
+// ── Add: single person ───────────────────────────────────────────────────────
+function AddPerson({ campaignId, onDone, onCancel }: { campaignId: string; onDone: () => void; onCancel: () => void }) {
+  const [f, setF] = useState({ name: '', linkedin_url: '', company: '', headline: '' });
+  const add = async () => {
+    if (!f.name.trim() && !f.linkedin_url.trim()) { toast.error('Enter a name or LinkedIn URL'); return; }
+    const r = await api.post(`/outreach/campaigns/${campaignId}/targets`, { from: 'manual', rows: [f] });
+    toast.success(r.data.added ? 'Added' : 'Already in campaign');
+    onDone();
+  };
+  return (
+    <AddPanel title="Add one person" onCancel={onCancel} onAdd={add} addLabel="Add person">
+      <div className="grid sm:grid-cols-2 gap-3">
+        <Field label="Name"><input value={f.name} onChange={e => setF({ ...f, name: e.target.value })} className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2" placeholder="Jane Doe" /></Field>
+        <Field label="LinkedIn URL"><input value={f.linkedin_url} onChange={e => setF({ ...f, linkedin_url: e.target.value })} className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2" placeholder="https://linkedin.com/in/…" /></Field>
+        <Field label="Company (optional)"><input value={f.company} onChange={e => setF({ ...f, company: e.target.value })} className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2" /></Field>
+        <Field label="Headline (optional)"><input value={f.headline} onChange={e => setF({ ...f, headline: e.target.value })} className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2" /></Field>
+      </div>
+    </AddPanel>
+  );
+}
+
+// ── Add: from saved candidates ───────────────────────────────────────────────
 function AddFromCandidates({ campaignId, onDone, onCancel }: { campaignId: string; onDone: () => void; onCancel: () => void }) {
   const [cands, setCands] = useState<Candidate[]>([]);
   const [sel, setSel] = useState<Set<number>>(new Set());
@@ -384,6 +457,7 @@ function AddFromCandidates({ campaignId, onDone, onCancel }: { campaignId: strin
     const s = q.toLowerCase();
     return cands.filter(c => !s || [c.full_name, c.headline, c.company].some(x => (x || '').toLowerCase().includes(s)));
   }, [cands, q]);
+  const allOn = filtered.length > 0 && filtered.every(c => sel.has(c.id));
   const add = async () => {
     if (sel.size === 0) return;
     const r = await api.post(`/outreach/campaigns/${campaignId}/targets`, { from: 'candidates', ids: [...sel] });
@@ -394,6 +468,10 @@ function AddFromCandidates({ campaignId, onDone, onCancel }: { campaignId: strin
     <AddPanel title="Add from saved Candidates" onCancel={onCancel} onAdd={add} addLabel={`Add ${sel.size || ''}`}>
       <input value={q} onChange={e => setQ(e.target.value)} placeholder="Search candidates…"
         className="w-full text-sm border border-gray-300 rounded-lg px-3 py-2 mb-2" />
+      <label className="flex items-center gap-2 text-xs text-gray-500 mb-1 px-1">
+        <input type="checkbox" checked={allOn}
+          onChange={() => setSel(allOn ? new Set() : new Set(filtered.map(c => c.id)))} /> Select all ({filtered.length})
+      </label>
       <div className="max-h-64 overflow-auto border border-gray-100 rounded-lg divide-y divide-gray-50">
         {filtered.length === 0 && <div className="text-sm text-gray-400 p-4 text-center">No candidates. Save some from the Candidates tab first.</div>}
         {filtered.map(c => {
@@ -413,13 +491,22 @@ function AddFromCandidates({ campaignId, onDone, onCancel }: { campaignId: strin
   );
 }
 
+// ── Add: from a board (group + filters + selection) ──────────────────────────
+type Op = 'not_empty' | 'empty' | 'equals' | 'contains';
+interface FilterRow { columnId: string; op: Op; value: string; }
+const OP_LABEL: Record<Op, string> = { not_empty: 'is not empty', empty: 'is empty', equals: 'equals', contains: 'contains' };
+
 function AddFromBoard({ campaignId, onDone, onCancel }: { campaignId: string; onDone: () => void; onCancel: () => void }) {
   const [boards, setBoards] = useState<{ id: string; name: string }[]>([]);
   const [boardId, setBoardId] = useState('');
-  const [cols, setCols] = useState<{ id: string; name: string; type: string }[]>([]);
+  const [detail, setDetail] = useState<any>(null);           // { columns, groups, items, values }
+  const [groupId, setGroupId] = useState('');
   const [urlCol, setUrlCol] = useState('');
   const [nameCol, setNameCol] = useState('');
   const [companyCol, setCompanyCol] = useState('');
+  const [headlineCol, setHeadlineCol] = useState('');
+  const [filters, setFilters] = useState<FilterRow[]>([]);
+  const [sel, setSel] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     (async () => {
@@ -438,28 +525,67 @@ function AddFromBoard({ campaignId, onDone, onCancel }: { campaignId: string; on
   }, []);
 
   useEffect(() => {
-    if (!boardId) { setCols([]); return; }
+    if (!boardId) { setDetail(null); return; }
+    setSel(new Set());
     api.get(`/boards/${boardId}`).then(r => {
-      const columns = (r.data.columns || []).map((c: any) => ({ id: c.id, name: c.name, type: c.type }));
-      setCols(columns);
-      const guessUrl = columns.find((c: any) => c.type === 'link') || columns.find((c: any) => /link|url/i.test(c.name));
+      setDetail(r.data);
+      const cols = r.data.columns || [];
+      const guessUrl = cols.find((c: any) => c.type === 'link') || cols.find((c: any) => /link|url/i.test(c.name));
       setUrlCol(guessUrl?.id || '');
       setNameCol('');
-      setCompanyCol(columns.find((c: any) => /company|org/i.test(c.name))?.id || '');
+      setCompanyCol(cols.find((c: any) => /company|org/i.test(c.name))?.id || '');
+      setHeadlineCol(cols.find((c: any) => /headline|title|role|position/i.test(c.name))?.id || '');
+      setGroupId('');
+      setFilters([]);
     }).catch(() => {});
   }, [boardId]);
 
+  const columns: any[] = detail?.columns || [];
+  // value map: itemId -> columnId -> value
+  const valMap = useMemo(() => {
+    const m: Record<string, Record<string, string>> = {};
+    for (const v of (detail?.values || [])) {
+      (m[v.item_id] = m[v.item_id] || {})[v.column_id] = v.value;
+    }
+    return m;
+  }, [detail]);
+
+  const matchFilter = (itemId: string, f: FilterRow) => {
+    const raw = (valMap[itemId]?.[f.columnId] ?? '').toString();
+    const val = raw.trim();
+    switch (f.op) {
+      case 'not_empty': return !!val;
+      case 'empty': return !val;
+      case 'equals': return val.toLowerCase() === f.value.trim().toLowerCase();
+      case 'contains': return val.toLowerCase().includes(f.value.trim().toLowerCase());
+    }
+  };
+
+  const rows = useMemo(() => {
+    const items = (detail?.items || []).filter((it: any) => !it.parent_item_id && (!groupId || it.group_id === groupId));
+    return items.map((it: any) => {
+      const url = urlCol ? (valMap[it.id]?.[urlCol] || '') : '';
+      const name = (nameCol ? valMap[it.id]?.[nameCol] : '') || it.name;
+      const company = companyCol ? (valMap[it.id]?.[companyCol] || '') : '';
+      const headline = headlineCol ? (valMap[it.id]?.[headlineCol] || '') : '';
+      return { id: it.id, name, url, company, headline };
+    }).filter((r: any) => filters.every(f => matchFilter(r.id, f)));
+  }, [detail, groupId, urlCol, nameCol, companyCol, headlineCol, filters, valMap]);
+
+  const withUrl = rows.filter((r: any) => r.url);
+  const allOn = withUrl.length > 0 && withUrl.every((r: any) => sel.has(r.id));
+
   const add = async () => {
-    if (!boardId || !urlCol) { toast.error('Pick a board and the LinkedIn-URL column'); return; }
-    const r = await api.post(`/outreach/campaigns/${campaignId}/targets`, {
-      from: 'board', board_id: boardId, url_column: urlCol, name_column: nameCol || null, company_column: companyCol || null,
-    });
-    toast.success(`Added ${r.data.added}${r.data.skipped ? ` · ${r.data.skipped} already in` : ''}`);
+    const chosen = withUrl.filter((r: any) => sel.has(r.id));
+    if (!chosen.length) { toast.error('Select at least one person (must have a LinkedIn URL)'); return; }
+    const payload = chosen.map((r: any) => ({ name: r.name, linkedin_url: r.url, company: r.company || null, headline: r.headline || null, source_ref: r.id }));
+    const res = await api.post(`/outreach/campaigns/${campaignId}/targets`, { from: 'rows', source: 'board', rows: payload });
+    toast.success(`Added ${res.data.added}${res.data.skipped ? ` · ${res.data.skipped} already in` : ''}`);
     onDone();
   };
 
   return (
-    <AddPanel title="Add from a board" onCancel={onCancel} onAdd={add} addLabel="Add from board">
+    <AddPanel title="Add from a board" onCancel={onCancel} onAdd={add} addLabel={`Add ${sel.size || ''} selected`}>
       <div className="grid sm:grid-cols-2 gap-3">
         <Field label="Board">
           <select value={boardId} onChange={e => setBoardId(e.target.value)} className="w-full text-sm border border-gray-300 rounded-lg px-2 py-2">
@@ -467,21 +593,77 @@ function AddFromBoard({ campaignId, onDone, onCancel }: { campaignId: string; on
             {boards.map(b => <option key={b.id} value={b.id}>{b.name}</option>)}
           </select>
         </Field>
-        <Field label="LinkedIn-URL column *">
-          <ColSelect cols={cols} value={urlCol} onChange={setUrlCol} />
+        <Field label="Group">
+          <select value={groupId} onChange={e => setGroupId(e.target.value)} disabled={!detail}
+            className="w-full text-sm border border-gray-300 rounded-lg px-2 py-2 disabled:bg-gray-50">
+            <option value="">All groups</option>
+            {(detail?.groups || []).map((g: any) => <option key={g.id} value={g.id}>{g.name}</option>)}
+          </select>
         </Field>
-        <Field label="Name column (optional — defaults to Item name)">
-          <ColSelect cols={cols} value={nameCol} onChange={setNameCol} allowNone />
-        </Field>
-        <Field label="Company column (optional)">
-          <ColSelect cols={cols} value={companyCol} onChange={setCompanyCol} allowNone />
-        </Field>
+        <Field label="LinkedIn-URL column *"><ColSelect cols={columns} value={urlCol} onChange={setUrlCol} /></Field>
+        <Field label="Name column (optional — defaults to Item name)"><ColSelect cols={columns} value={nameCol} onChange={setNameCol} allowNone /></Field>
+        <Field label="Company column (optional)"><ColSelect cols={columns} value={companyCol} onChange={setCompanyCol} allowNone /></Field>
+        <Field label="Headline column (optional)"><ColSelect cols={columns} value={headlineCol} onChange={setHeadlineCol} allowNone /></Field>
       </div>
-      <p className="text-xs text-gray-400 mt-2">Only items that have a value in the URL column are added.</p>
+
+      {detail && (
+        <div className="mt-3">
+          <div className="flex items-center justify-between mb-1.5">
+            <span className="text-xs font-medium text-gray-500 flex items-center gap-1"><FilterIcon size={12} /> Filters (all must match)</span>
+            <button onClick={() => setFilters([...filters, { columnId: columns[0]?.id || '', op: 'not_empty', value: '' }])}
+              className="text-xs text-[#0a66c2] flex items-center gap-1"><Plus size={12} /> Add filter</button>
+          </div>
+          {filters.map((f, i) => (
+            <div key={i} className="flex items-center gap-2 mb-1.5">
+              <select value={f.columnId} onChange={e => setFilters(filters.map((x, j) => j === i ? { ...x, columnId: e.target.value } : x))}
+                className="text-sm border border-gray-300 rounded-lg px-2 py-1.5 flex-1">
+                {columns.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <select value={f.op} onChange={e => setFilters(filters.map((x, j) => j === i ? { ...x, op: e.target.value as Op } : x))}
+                className="text-sm border border-gray-300 rounded-lg px-2 py-1.5">
+                {Object.entries(OP_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+              {(f.op === 'equals' || f.op === 'contains') && (
+                <input value={f.value} onChange={e => setFilters(filters.map((x, j) => j === i ? { ...x, value: e.target.value } : x))}
+                  placeholder="value" className="text-sm border border-gray-300 rounded-lg px-2 py-1.5 w-32" />
+              )}
+              <button onClick={() => setFilters(filters.filter((_, j) => j !== i))} className="text-gray-400 hover:text-red-500"><X size={14} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {detail && urlCol && (
+        <div className="mt-3">
+          <label className="flex items-center gap-2 text-xs text-gray-500 mb-1 px-1">
+            <input type="checkbox" checked={allOn} onChange={() => setSel(allOn ? new Set() : new Set(withUrl.map((r: any) => r.id)))} />
+            Select all with a URL ({withUrl.length})
+            {rows.length - withUrl.length > 0 && <span className="text-amber-500">· {rows.length - withUrl.length} skipped (no URL)</span>}
+          </label>
+          <div className="max-h-60 overflow-auto border border-gray-100 rounded-lg divide-y divide-gray-50">
+            {rows.length === 0 && <div className="text-sm text-gray-400 p-4 text-center">No matching items.</div>}
+            {rows.map((r: any) => {
+              const hasUrl = !!r.url;
+              const on = sel.has(r.id);
+              return (
+                <label key={r.id} className={`flex items-center gap-3 px-3 py-2 ${hasUrl ? 'hover:bg-gray-50 cursor-pointer' : 'opacity-40'}`}>
+                  <input type="checkbox" disabled={!hasUrl} checked={on}
+                    onChange={() => setSel(s => { const n = new Set(s); on ? n.delete(r.id) : n.add(r.id); return n; })} />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-sm font-medium text-gray-800 truncate">{r.name || '—'}</div>
+                    <div className="text-xs text-gray-400 truncate">{[r.headline, r.company].filter(Boolean).join(' · ') || (hasUrl ? r.url : 'no LinkedIn URL')}</div>
+                  </div>
+                </label>
+              );
+            })}
+          </div>
+        </div>
+      )}
     </AddPanel>
   );
 }
 
+// ── Add: paste a list ────────────────────────────────────────────────────────
 function AddFromPaste({ campaignId, onDone, onCancel }: { campaignId: string; onDone: () => void; onCancel: () => void }) {
   const [text, setText] = useState('');
   const add = async () => {
@@ -535,9 +717,9 @@ function TokenBar({ onInsert, withAi }: { onInsert: (t: string) => void; withAi?
     </div>
   );
 }
-function AddBtn({ icon, label, onClick }: { icon: React.ReactNode; label: string; onClick: () => void }) {
+function AddBtn({ icon, label, onClick, active }: { icon: React.ReactNode; label: string; onClick: () => void; active?: boolean }) {
   return (
-    <button onClick={onClick} className="flex items-center gap-1.5 text-sm border border-gray-300 rounded-lg px-3 py-1.5 hover:bg-gray-50 text-gray-700">
+    <button onClick={onClick} className={`flex items-center gap-1.5 text-sm border rounded-lg px-3 py-1.5 ${active ? 'border-[#0a66c2] bg-[#0a66c2]/5 text-[#0a66c2]' : 'border-gray-300 hover:bg-gray-50 text-gray-700'}`}>
       {icon} {label}
     </button>
   );

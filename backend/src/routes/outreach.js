@@ -62,6 +62,12 @@ try {
   `);
 } catch (e) { console.error('Outreach table init error (non-fatal):', e.message); }
 
+// Migrations: rotating message variants (SQLite has no ADD COLUMN IF NOT EXISTS).
+for (const sql of [
+  `ALTER TABLE outreach_campaigns ADD COLUMN note_variants TEXT`,  // JSON array of connect-note variants
+  `ALTER TABLE outreach_steps ADD COLUMN variants TEXT`,           // JSON array of message variants
+]) { try { db.exec(sql); } catch (_) { /* already exists */ } }
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 function ownCampaign(id, userId) {
   const c = db.prepare('SELECT * FROM outreach_campaigns WHERE id = ?').get(id);
@@ -78,6 +84,28 @@ function canAccessBoard(boardId, userId) {
 }
 
 function firstName(name) { return (name || '').trim().split(/\s+/)[0] || ''; }
+
+// Normalize a list of template variants: drop blanks, always return ≥1 entry.
+function cleanVariants(arr, fallback) {
+  const list = (Array.isArray(arr) ? arr : []).map(s => String(s || '').trim()).filter(Boolean);
+  if (list.length) return list;
+  const f = String(fallback || '').trim();
+  return f ? [f] : [];
+}
+function parseVariants(json, fallback) {
+  let list = [];
+  try { list = JSON.parse(json || '[]'); } catch (_) { list = []; }
+  if (!Array.isArray(list)) list = [];
+  list = list.map(s => String(s || '')).filter(s => s.trim());
+  if (!list.length && fallback) list = [fallback];
+  return list;
+}
+// Pick a variant to rotate through (round-robin by index; random when no index).
+function pickVariant(list, idx) {
+  if (!list || !list.length) return '';
+  if (typeof idx === 'number' && idx >= 0) return list[idx % list.length];
+  return list[Math.floor(Math.random() * list.length)];
+}
 
 // Replace {{Name}} / {{FirstName}} / {{Company}} / {{Headline}} tokens.
 function fillTokens(tpl, t) {
@@ -141,10 +169,11 @@ router.post('/campaigns', authenticate, (req, res) => {
   const b = req.body || {};
   if (!b.name || !b.name.trim()) return res.status(400).json({ error: 'name required' });
   const id = uuidv4();
+  const noteVariants = cleanVariants(b.note_variants, b.connect_note);
   db.prepare(`INSERT INTO outreach_campaigns
-    (id, user_id, name, status, connect_note, follow_too, message_mode, daily_limit, min_delay_sec, max_delay_sec, ai_provider, ai_instruction)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`).run(
-    id, req.user.id, b.name.trim(), b.status || 'draft', b.connect_note || '',
+    (id, user_id, name, status, connect_note, note_variants, follow_too, message_mode, daily_limit, min_delay_sec, max_delay_sec, ai_provider, ai_instruction)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+    id, req.user.id, b.name.trim(), b.status || 'draft', noteVariants[0] || '', JSON.stringify(noteVariants),
     b.follow_too ? 1 : 0, b.message_mode === 'sequence' ? 'sequence' : 'single',
     Number(b.daily_limit) || 20, Number(b.min_delay_sec) || 45, Number(b.max_delay_sec) || 120,
     b.ai_provider || null, b.ai_instruction || null
@@ -157,28 +186,36 @@ function saveSteps(campaignId, steps) {
   db.prepare('DELETE FROM outreach_steps WHERE campaign_id = ?').run(campaignId);
   const arr = Array.isArray(steps) ? steps : [];
   arr.forEach((s, i) => {
-    if (!s || !String(s.body || '').trim()) return;
-    db.prepare('INSERT INTO outreach_steps (id, campaign_id, step_index, delay_days, body) VALUES (?,?,?,?,?)')
-      .run(uuidv4(), campaignId, i, Number(s.delay_days) || 0, String(s.body).trim());
+    if (!s) return;
+    const variants = cleanVariants(s.variants, s.body);
+    if (!variants.length) return;
+    db.prepare('INSERT INTO outreach_steps (id, campaign_id, step_index, delay_days, body, variants) VALUES (?,?,?,?,?,?)')
+      .run(uuidv4(), campaignId, i, Number(s.delay_days) || 0, variants[0], JSON.stringify(variants));
   });
 }
 
 router.get('/campaigns/:id', authenticate, (req, res) => {
   const c = ownCampaign(req.params.id, req.user.id);
   if (!c) return res.status(404).json({ error: 'Not found' });
-  const steps = db.prepare('SELECT * FROM outreach_steps WHERE campaign_id = ? ORDER BY step_index').all(c.id);
+  const steps = db.prepare('SELECT * FROM outreach_steps WHERE campaign_id = ? ORDER BY step_index').all(c.id)
+    .map(s => ({ ...s, variants: parseVariants(s.variants, s.body) }));
   const targets = db.prepare('SELECT * FROM outreach_targets WHERE campaign_id = ? ORDER BY created_at').all(c.id);
-  res.json({ ok: true, data: { ...campaignWithCounts(c), steps, targets } });
+  const note_variants = parseVariants(c.note_variants, c.connect_note);
+  res.json({ ok: true, data: { ...campaignWithCounts(c), note_variants, steps, targets } });
 });
 
 router.put('/campaigns/:id', authenticate, (req, res) => {
   const c = ownCampaign(req.params.id, req.user.id);
   if (!c) return res.status(404).json({ error: 'Not found' });
   const b = req.body || {};
+  const noteVariants = b.note_variants !== undefined
+    ? cleanVariants(b.note_variants, b.connect_note)
+    : parseVariants(c.note_variants, c.connect_note);
   const fields = {
     name: b.name !== undefined ? b.name.trim() : c.name,
     status: b.status !== undefined ? b.status : c.status,
-    connect_note: b.connect_note !== undefined ? b.connect_note : c.connect_note,
+    connect_note: noteVariants[0] || '',
+    note_variants: JSON.stringify(noteVariants),
     follow_too: b.follow_too !== undefined ? (b.follow_too ? 1 : 0) : c.follow_too,
     message_mode: b.message_mode !== undefined ? (b.message_mode === 'sequence' ? 'sequence' : 'single') : c.message_mode,
     daily_limit: b.daily_limit !== undefined ? Number(b.daily_limit) || 20 : c.daily_limit,
@@ -187,10 +224,10 @@ router.put('/campaigns/:id', authenticate, (req, res) => {
     ai_provider: b.ai_provider !== undefined ? b.ai_provider : c.ai_provider,
     ai_instruction: b.ai_instruction !== undefined ? b.ai_instruction : c.ai_instruction,
   };
-  db.prepare(`UPDATE outreach_campaigns SET name=?, status=?, connect_note=?, follow_too=?, message_mode=?,
+  db.prepare(`UPDATE outreach_campaigns SET name=?, status=?, connect_note=?, note_variants=?, follow_too=?, message_mode=?,
       daily_limit=?, min_delay_sec=?, max_delay_sec=?, ai_provider=?, ai_instruction=?, updated_at=CURRENT_TIMESTAMP
       WHERE id=?`).run(
-    fields.name, fields.status, fields.connect_note, fields.follow_too, fields.message_mode,
+    fields.name, fields.status, fields.connect_note, fields.note_variants, fields.follow_too, fields.message_mode,
     fields.daily_limit, fields.min_delay_sec, fields.max_delay_sec, fields.ai_provider, fields.ai_instruction, c.id
   );
   if (b.steps !== undefined) saveSteps(c.id, b.steps);
@@ -264,11 +301,12 @@ router.post('/campaigns/:id/targets', authenticate, (req, res) => {
       const company = b.company_column ? (valOf.get(it.id, b.company_column) || {}).value : null;
       return { name: nm || it.name, company: company || null, linkedin_url: url || null, source_ref: it.id };
     }).filter(r => r.linkedin_url);
-  } else if (b.from === 'manual') {
-    source = 'manual';
+  } else if (b.from === 'manual' || b.from === 'rows') {
+    // Explicit rows — used by manual single-add, paste, and board multi-select.
+    source = ['candidate', 'board', 'manual'].includes(b.source) ? b.source : 'manual';
     rows = (b.rows || []).map(r => ({
       name: r.name || null, headline: r.headline || null, company: r.company || null,
-      linkedin_url: r.linkedin_url || r.url || null,
+      linkedin_url: r.linkedin_url || r.url || null, source_ref: r.source_ref || null,
     })).filter(r => r.name || r.linkedin_url);
   } else {
     return res.status(400).json({ error: 'Unknown source' });
@@ -319,16 +357,19 @@ router.post('/targets/:id/preview', authenticate, async (req, res) => {
   const c = ownCampaign(t.campaign_id, req.user.id);
   const b = req.body || {};
   try {
-    let tpl;
-    if (b.kind === 'note') tpl = c.connect_note;
+    let variants = [];
+    if (b.kind === 'note') variants = parseVariants(c.note_variants, c.connect_note);
     else {
       const idx = Number(b.step_index) || 0;
-      const step = db.prepare('SELECT body FROM outreach_steps WHERE campaign_id = ? AND step_index = ?').get(c.id, idx);
-      tpl = step && step.body;
+      const step = db.prepare('SELECT body, variants FROM outreach_steps WHERE campaign_id = ? AND step_index = ?').get(c.id, idx);
+      variants = step ? parseVariants(step.variants, step.body) : [];
     }
-    if (!tpl) return res.json({ ok: true, text: '' });
+    if (!variants.length) return res.json({ ok: true, text: '' });
+    // Rotate through variants so previews show the anti-detection rotation too.
+    const vi = b.variant_index !== undefined ? Number(b.variant_index) : undefined;
+    const tpl = pickVariant(variants, vi);
     const text = await resolveText(tpl, t, c, req.user.id);
-    res.json({ ok: true, text });
+    res.json({ ok: true, text, variant_count: variants.length });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
