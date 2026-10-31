@@ -18,7 +18,19 @@ const LENGTH_IDS = ['brief', 'medium', 'long'];
 const $ = (sel) => document.querySelector(sel);
 
 function send(type, payload) {
-  return new Promise((resolve) => chrome.runtime.sendMessage({ type, payload }, resolve));
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage({ type, payload }, (res) => {
+        if (chrome.runtime.lastError) {
+          resolve({ ok: false, error: chrome.runtime.lastError.message || 'Background not responding' });
+          return;
+        }
+        resolve(res || { ok: false, error: 'No response from background (reload the extension)' });
+      });
+    } catch (e) {
+      resolve({ ok: false, error: e.message });
+    }
+  });
 }
 
 function showSaved() {
