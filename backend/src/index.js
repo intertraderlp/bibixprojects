@@ -29,6 +29,7 @@ app.use('/api/auth',      extensionCors);
 app.use('/api/instagram', extensionCors);
 app.use('/api/linkedin',  extensionCors);
 app.use('/api/contacts',  extensionCors);
+app.use('/api/outreach',  extensionCors);
 
 app.use(express.json({ limit: '20mb' }));
 
@@ -63,6 +64,7 @@ const instagramRouter = require('./routes/instagram');
 app.use('/api/instagram',      instagramRouter);
 app.use('/api/linkedin',       require('./routes/linkedin'));
 app.use('/api/contacts',       require('./routes/contacts'));
+app.use('/api/outreach',       require('./routes/outreach'));
 app.use('/api/ai',             require('./routes/ai'));
 
 // Start Telegram bot (only if TELEGRAM_BOT_TOKEN is set)

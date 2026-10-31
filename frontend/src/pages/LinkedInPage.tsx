@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   BarChart2, Clock, Settings as SettingsIcon, Linkedin, ChevronDown, Trash2,
-  MessageSquare, Reply, Lightbulb, Copy, Check, Download, Users, ExternalLink, Search,
+  MessageSquare, Reply, Lightbulb, Copy, Check, Download, Users, ExternalLink, Search, Send,
 } from 'lucide-react';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
+import OutreachTab from './linkedin/OutreachTab';
 
-type Tab = 'dashboard' | 'history' | 'candidates' | 'settings';
+type Tab = 'dashboard' | 'history' | 'candidates' | 'outreach' | 'settings';
 
 interface Candidate {
   id: number;
@@ -250,6 +251,7 @@ export default function LinkedInPage() {
     { id: 'dashboard',  label: 'Dashboard',  icon: <BarChart2 size={15} /> },
     { id: 'history',    label: 'History',    icon: <Clock size={15} /> },
     { id: 'candidates', label: 'Candidates', icon: <Users size={15} /> },
+    { id: 'outreach',   label: 'Outreach',   icon: <Send size={15} /> },
     { id: 'settings',   label: 'Settings',   icon: <SettingsIcon size={15} /> },
   ];
 
@@ -560,6 +562,9 @@ export default function LinkedInPage() {
             </div>
           </div>
         )}
+
+        {/* OUTREACH */}
+        {tab === 'outreach' && <OutreachTab />}
 
         {/* SETTINGS */}
         {tab === 'settings' && settings && (
