@@ -160,6 +160,61 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
 });
 
+// ── Outreach tab ──────────────────────────────────────────────────────────
+async function refreshOutreachSummary() {
+  const el = $('#out-summary');
+  if (el) el.textContent = 'Checking your campaigns…';
+  const res = await send('outreachSummary');
+  if (!res.ok) { if (el) el.textContent = res.error || 'Could not load campaigns.'; return; }
+  const d = res.data || {};
+  if (el) {
+    el.textContent = d.ready > 0
+      ? `${d.ready} prospect${d.ready === 1 ? '' : 's'} ready to invite across ${d.campaigns.length} active campaign${d.campaigns.length === 1 ? '' : 's'}.`
+      : (d.campaigns.length
+        ? 'No prospects left within today’s limits. Raise a limit or add prospects in Monday.'
+        : 'No active campaigns. Set a campaign to “Active” in Monday → LinkedIn → Outreach.');
+  }
+  const st = await send('outreachState');
+  setOutreachRunning(st.ok && st.data.running);
+}
+
+function setOutreachRunning(running) {
+  const start = $('#out-start'), stop = $('#out-stop');
+  if (start) { start.disabled = running; start.hidden = running; }
+  if (stop) stop.hidden = !running;
+}
+
+function bindOutreachTab() {
+  $('#out-start').addEventListener('click', async () => {
+    const limit = Math.max(1, Math.min(50, Number($('#out-limit').value) || 15));
+    const prog = $('#out-progress');
+    prog.hidden = false; prog.className = 'act-progress'; prog.textContent = 'Starting…';
+    setOutreachRunning(true);
+    const res = await send('outreachStart', { limit });
+    if (!res.ok) {
+      prog.className = 'act-progress err';
+      prog.textContent = res.error || 'Could not start.';
+      setOutreachRunning(false);
+    }
+  });
+  $('#out-stop').addEventListener('click', async () => {
+    await send('outreachStop');
+    const prog = $('#out-progress');
+    if (prog) { prog.hidden = false; prog.textContent = 'Stopping…'; }
+  });
+}
+
+// Progress from the background runner.
+chrome.runtime.onMessage.addListener((msg) => {
+  if (!msg || msg.type !== 'bibix-outreach-progress') return;
+  const prog = $('#out-progress');
+  if (!prog) return;
+  prog.hidden = false;
+  prog.textContent = msg.text || '';
+  prog.className = 'act-progress' + (msg.error ? ' err' : msg.done ? ' ok' : '');
+  if (msg.done) { setOutreachRunning(false); refreshOutreachSummary(); }
+});
+
 // ── Candidates tab ──────────────────────────────────────────────────────────
 let candidatesCache = [];
 
@@ -302,6 +357,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   bindCommentTab();
   bindReplyTab();
   bindActionsTab();
+  bindOutreachTab();
   bindCandidatesTab();
   bindAccountTab();
   bindLogin();
@@ -310,6 +366,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setActiveTab(b.dataset.tab);
     if (b.dataset.tab === 'candidates') loadCandidates();
     if (b.dataset.tab === 'actions') refreshActionsStatus();
+    if (b.dataset.tab === 'outreach') refreshOutreachSummary();
   }));
   setActiveTab('comment');
 

@@ -1647,8 +1647,114 @@
         sendResponse({ ok: true });
         return true;
       }
+      // Outreach: send ONE personalized connection request on the current profile.
+      if (msg && msg.type === 'bibix-outreach-connect') {
+        connectOnCurrentProfile(msg.note || '')
+          .then((r) => sendResponse(r))
+          .catch((e) => sendResponse({ ok: false, status: 'failed', error: (e && e.message) || 'error' }));
+        return true; // async
+      }
     });
   } catch (_) {}
+
+  // Send a connection request to the person whose profile is currently open,
+  // optionally with a personalized note. Reuses the bulk-connect primitives.
+  async function connectOnCurrentProfile(note) {
+    const P = '[Bibix Outreach]';
+    // 1. Find a Connect button in the profile's top-card actions.
+    let btn = null;
+    for (let i = 0; i < 20; i++) {
+      btn = findConnectButtons().find((b) => {
+        // Prefer the top card; skip tiny buttons in "People also viewed" rail.
+        const rect = b.getBoundingClientRect();
+        return rect.top < window.innerHeight; // visible-ish
+      }) || findConnectButtons()[0];
+      if (btn) break;
+      await wait(300);
+    }
+    // 2. Not directly visible — it may live under the "More actions" menu.
+    if (!btn) {
+      const more = await findButton(3500, (b) => {
+        const l = (b.getAttribute('aria-label') || '').toLowerCase();
+        const t = (b.innerText || '').trim().toLowerCase();
+        return /more actions/i.test(l) || t === 'more';
+      });
+      if (more) {
+        realisticClick(more);
+        await wait(rand(700, 1100));
+        btn = await findButton(3000, (b) => {
+          const t = (b.innerText || b.textContent || '').trim();
+          const l = (b.getAttribute('aria-label') || '');
+          if (/\bpending\b|\bremove\b|\bfollowing\b|\bmessage\b/i.test((l + ' ' + t).toLowerCase())) return false;
+          return /to connect/i.test(l) || /^connect$/i.test(t);
+        });
+      }
+    }
+    if (!btn) return { ok: false, status: 'skipped', error: 'No Connect button (already connected, pending, or 1st-degree)' };
+
+    highlightBriefly(btn, '#dc2626');
+    realisticClick(btn);
+    await wait(rand(1200, 2000));
+
+    // 3. With a note: open the note field, type, send.
+    if (note && note.trim()) {
+      const addNote = await findButton(4000, (b) => {
+        const t = (b.innerText || '').trim().toLowerCase();
+        const l = (b.getAttribute('aria-label') || '').toLowerCase();
+        return t === 'add a note' || l === 'add a note';
+      });
+      if (addNote) { realisticClick(addNote); await wait(rand(600, 1000)); }
+      const ta = document.querySelector('textarea#custom-message, textarea[name="message"], div[role="dialog"] textarea');
+      if (ta) {
+        try {
+          ta.focus();
+          const text = note.trim().slice(0, 300); // LinkedIn free-note cap
+          const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, 'value').set;
+          setter.call(ta, text);
+          ta.dispatchEvent(new Event('input', { bubbles: true }));
+          await wait(rand(400, 800));
+        } catch (_) {}
+      }
+      const sendBtn = await findButton(4000, (b) => {
+        if (b.disabled) return false;
+        const t = (b.innerText || '').trim().toLowerCase();
+        const l = (b.getAttribute('aria-label') || '').toLowerCase();
+        if (t === 'add a note') return false;
+        return t === 'send' || /^send( invitation| now)?$/i.test(t) || /send.*invitation/i.test(l);
+      });
+      if (sendBtn) {
+        highlightBriefly(sendBtn, '#0a66c2');
+        realisticClick(sendBtn);
+        await wait(rand(800, 1400));
+        return { ok: true, status: 'invited' };
+      }
+      console.warn(P, 'note sent button not found, trying send-without-note');
+    }
+
+    // 4. No-note path (or the note field was unavailable — e.g. weekly note cap).
+    const sendNoNote = await findButton(4000, (b) => {
+      if (b.disabled) return false;
+      const t = (b.innerText || '').trim().toLowerCase();
+      const l = (b.getAttribute('aria-label') || '').toLowerCase();
+      if (t === 'add a note') return false;
+      return /^send without a note$/i.test(t) || /^send without a note$/i.test(l)
+        || t === 'send' || t === 'send now' || /send.*invitation/i.test(l);
+    });
+    if (sendNoNote) {
+      highlightBriefly(sendNoNote, '#0a66c2');
+      realisticClick(sendNoNote);
+      await wait(rand(800, 1400));
+      return { ok: true, status: 'invited', note: false };
+    }
+
+    // 5. Couldn't complete — likely an email-verification modal. Close it.
+    try {
+      const close = await findButton(1500, (b) => /dismiss|close/i.test(b.getAttribute('aria-label') || ''));
+      if (close) realisticClick(close);
+      else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape' }));
+    } catch (_) {}
+    return { ok: false, status: 'failed', error: 'Could not complete invite (email required or page layout changed)' };
+  }
 
   function realisticClick(btn) {
     // Some LinkedIn buttons need a full mousedown/mouseup/click sequence.

@@ -5,7 +5,7 @@
 const express = require('express');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db/database');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authenticateFlexible } = require('../middleware/auth');
 const { generateText } = require('../services/aiProviders');
 
 const router = express.Router();
@@ -373,6 +373,84 @@ router.post('/targets/:id/preview', authenticate, async (req, res) => {
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
+});
+
+// ── Extension API (authenticateFlexible = JWT or the browser-extension token) ──
+// The LinkedIn extension polls these to run the queue and report results.
+
+function invitesToday(campaignId) {
+  const r = db.prepare(`SELECT COUNT(*) n FROM outreach_targets
+    WHERE campaign_id = ? AND invited_at IS NOT NULL AND date(invited_at) = date('now')`).get(campaignId);
+  return r ? r.n : 0;
+}
+function invitedTotal(campaignId) {
+  const r = db.prepare(`SELECT COUNT(*) n FROM outreach_targets WHERE campaign_id = ? AND status != 'queued'`).get(campaignId);
+  return r ? r.n : 0;
+}
+
+// Cheap overview for the extension/popup (no AI resolution).
+router.get('/extension/summary', authenticateFlexible, (req, res) => {
+  const camps = db.prepare("SELECT * FROM outreach_campaigns WHERE user_id = ? AND status = 'active'").all(req.user.id);
+  let ready = 0;
+  const campaigns = camps.map(c => {
+    const queued = db.prepare("SELECT COUNT(*) n FROM outreach_targets WHERE campaign_id = ? AND status = 'queued' AND linkedin_url IS NOT NULL AND linkedin_url != ''").get(c.id).n;
+    const remainingToday = Math.max(0, c.daily_limit - invitesToday(c.id));
+    const canSend = Math.min(queued, remainingToday);
+    ready += canSend;
+    return { id: c.id, name: c.name, queued, remaining_today: remainingToday, can_send: canSend };
+  });
+  res.json({ ok: true, data: { ready, campaigns } });
+});
+
+// The invite queue: queued targets across active campaigns, within each
+// campaign's remaining daily limit, each with a rotated+resolved connect note.
+router.get('/extension/next', authenticateFlexible, async (req, res) => {
+  const cap = Math.max(1, Math.min(50, Number(req.query.limit) || 15));
+  const camps = db.prepare("SELECT * FROM outreach_campaigns WHERE user_id = ? AND status = 'active' ORDER BY created_at").all(req.user.id);
+  const out = [];
+  for (const c of camps) {
+    if (out.length >= cap) break;
+    const remaining = Math.max(0, c.daily_limit - invitesToday(c.id));
+    if (remaining <= 0) continue;
+    const take = Math.min(remaining, cap - out.length);
+    const queued = db.prepare(`SELECT * FROM outreach_targets
+      WHERE campaign_id = ? AND status = 'queued' AND linkedin_url IS NOT NULL AND linkedin_url != ''
+      ORDER BY created_at LIMIT ?`).all(c.id, take);
+    if (!queued.length) continue;
+    const noteVariants = parseVariants(c.note_variants, c.connect_note);
+    const base = invitedTotal(c.id); // rotate variants deterministically
+    for (let i = 0; i < queued.length; i++) {
+      const t = queued[i];
+      let note = '';
+      try {
+        const tpl = pickVariant(noteVariants, base + i);
+        note = tpl ? await resolveText(tpl, t, c, req.user.id) : '';
+      } catch (_) { note = fillTokens(pickVariant(noteVariants, base + i), t); }
+      out.push({
+        target_id: t.id, campaign_id: c.id, name: t.name, linkedin_url: t.linkedin_url,
+        note, follow_too: !!c.follow_too,
+        min_delay_sec: c.min_delay_sec, max_delay_sec: c.max_delay_sec,
+      });
+      if (out.length >= cap) break;
+    }
+  }
+  res.json({ ok: true, data: out });
+});
+
+// Report the result of an invite (or follow) the extension performed.
+router.post('/extension/report', authenticateFlexible, (req, res) => {
+  const b = req.body || {};
+  const t = db.prepare('SELECT * FROM outreach_targets WHERE id = ?').get(b.target_id);
+  if (!t || t.user_id !== req.user.id) return res.status(404).json({ error: 'Not found' });
+  if (b.ok) {
+    db.prepare(`UPDATE outreach_targets SET status = 'invited', invited_at = CURRENT_TIMESTAMP, last_error = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?`).run(t.id);
+  } else {
+    // Soft failure (already connected / pending / UI change): mark skipped so it
+    // doesn't block the queue, keep the reason for review.
+    db.prepare(`UPDATE outreach_targets SET status = 'skipped', last_error = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?`)
+      .run(String(b.error || b.status || 'failed').slice(0, 300), t.id);
+  }
+  res.json({ ok: true });
 });
 
 module.exports = router;
