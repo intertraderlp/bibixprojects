@@ -1661,18 +1661,36 @@
   // optionally with a personalized note. Reuses the bulk-connect primitives.
   async function connectOnCurrentProfile(note) {
     const P = '[Bibix Outreach]';
-    // 1. Find a Connect button in the profile's top-card actions.
+    const topCard = () => document.querySelector('main section, .pv-top-card, [class*="pv-top-card"]') || document.querySelector('main') || document.body;
+    const closeDialog = () => {
+      try {
+        const dlg = document.querySelector('div[role="dialog"]');
+        const c = dlg && dlg.querySelector('button[aria-label*="Dismiss" i], button[aria-label*="Close" i]');
+        if (c) c.click(); else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape' }));
+      } catch (_) {}
+    };
+    const isEmailGate = (dlg) => {
+      if (!dlg) return false;
+      if (dlg.querySelector('input[type="email"], input#email, input[name="email"]')) return true;
+      return /enter .*email|email address|verify .*member|that .*knows you/i.test(dlg.innerText || '');
+    };
+    const pendingNow = () => Array.from(document.querySelectorAll('button')).some((b) => /^pending$/i.test((b.innerText || '').trim()));
+
+    // 1. Find the Connect button in the profile's TOP CARD (not the rails).
     let btn = null;
-    for (let i = 0; i < 20; i++) {
-      btn = findConnectButtons().find((b) => {
-        // Prefer the top card; skip tiny buttons in "People also viewed" rail.
-        const rect = b.getBoundingClientRect();
-        return rect.top < window.innerHeight; // visible-ish
-      }) || findConnectButtons()[0];
+    for (let i = 0; i < 24; i++) {
+      const card = topCard();
+      btn = Array.from(card.querySelectorAll('button')).find((b) => {
+        if (b.disabled || b.offsetHeight === 0) return false;
+        const l = (b.getAttribute('aria-label') || '');
+        const t = (b.innerText || '').trim();
+        if (/pending|message|following|remove/i.test((l + ' ' + t).toLowerCase())) return false;
+        return /invite .+ to connect/i.test(l) || /^connect$/i.test(t);
+      });
       if (btn) break;
       await wait(300);
     }
-    // 2. Not directly visible — it may live under the "More actions" menu.
+    // 2. Buried under "More actions".
     if (!btn) {
       const more = await findButton(3500, (b) => {
         const l = (b.getAttribute('aria-label') || '').toLowerCase();
@@ -1690,21 +1708,45 @@
         });
       }
     }
-    if (!btn) return { ok: false, status: 'skipped', error: 'No Connect button (already connected, pending, or 1st-degree)' };
+    if (!btn) {
+      if (pendingNow()) return { ok: false, status: 'skipped', error: 'Invite already pending' };
+      return { ok: false, status: 'skipped', error: 'No Connect option (already connected, or LinkedIn hides Connect for this profile)' };
+    }
 
     highlightBriefly(btn, '#dc2626');
     realisticClick(btn);
-    await wait(rand(1200, 2000));
 
-    // 3. With a note: open the note field, type, send.
+    // 3. Wait for the invite dialog — or an instant send (button flips to Pending).
+    let dlg = null;
+    for (let i = 0; i < 24; i++) {
+      dlg = document.querySelector('div[role="dialog"]');
+      if (dlg) break;
+      if (pendingNow()) return { ok: true, status: 'invited', note: false };
+      await wait(250);
+    }
+    if (!dlg) {
+      if (pendingNow()) return { ok: true, status: 'invited', note: false };
+      return { ok: false, status: 'failed', error: 'No invite dialog appeared after clicking Connect' };
+    }
+
+    // 4. Out-of-network: LinkedIn demands their email — can't send on a free account.
+    if (isEmailGate(dlg)) {
+      closeDialog();
+      return { ok: false, status: 'skipped', error: 'LinkedIn requires their email (out-of-network — can’t invite on a free account)' };
+    }
+
+    const inDlg = (pred) => Array.from((document.querySelector('div[role="dialog"]') || dlg).querySelectorAll('button'))
+      .find((b) => { try { return b.offsetHeight > 0 && !b.disabled && pred(b); } catch (_) { return false; } });
+
+    // 5. With a note: open note field, type, then Send.
     if (note && note.trim()) {
-      const addNote = await findButton(4000, (b) => {
+      const addNote = inDlg((b) => {
         const t = (b.innerText || '').trim().toLowerCase();
         const l = (b.getAttribute('aria-label') || '').toLowerCase();
         return t === 'add a note' || l === 'add a note';
       });
       if (addNote) { realisticClick(addNote); await wait(rand(600, 1000)); }
-      const ta = document.querySelector('textarea#custom-message, textarea[name="message"], div[role="dialog"] textarea');
+      const ta = (document.querySelector('div[role="dialog"]') || dlg).querySelector('textarea#custom-message, textarea[name="message"], textarea');
       if (ta) {
         try {
           ta.focus();
@@ -1715,45 +1757,27 @@
           await wait(rand(400, 800));
         } catch (_) {}
       }
-      const sendBtn = await findButton(4000, (b) => {
-        if (b.disabled) return false;
-        const t = (b.innerText || '').trim().toLowerCase();
-        const l = (b.getAttribute('aria-label') || '').toLowerCase();
-        if (t === 'add a note') return false;
-        return t === 'send' || /^send( invitation| now)?$/i.test(t) || /send.*invitation/i.test(l);
-      });
-      if (sendBtn) {
-        highlightBriefly(sendBtn, '#0a66c2');
-        realisticClick(sendBtn);
-        await wait(rand(800, 1400));
-        return { ok: true, status: 'invited' };
-      }
-      console.warn(P, 'note sent button not found, trying send-without-note');
     }
 
-    // 4. No-note path (or the note field was unavailable — e.g. weekly note cap).
-    const sendNoNote = await findButton(4000, (b) => {
-      if (b.disabled) return false;
+    // 6. Click Send (with or without note) — scoped to the dialog.
+    let sendBtn = inDlg((b) => {
       const t = (b.innerText || '').trim().toLowerCase();
       const l = (b.getAttribute('aria-label') || '').toLowerCase();
       if (t === 'add a note') return false;
-      return /^send without a note$/i.test(t) || /^send without a note$/i.test(l)
-        || t === 'send' || t === 'send now' || /send.*invitation/i.test(l);
+      return /^send( invitation| now)?$/i.test(t) || /^send without a note$/i.test(t)
+        || /send (invitation|now)/i.test(l) || /send without a note/i.test(l);
     });
-    if (sendNoNote) {
-      highlightBriefly(sendNoNote, '#0a66c2');
-      realisticClick(sendNoNote);
+    if (!sendBtn) sendBtn = inDlg((b) => (b.innerText || '').trim().toLowerCase().startsWith('send'));
+    if (sendBtn) {
+      highlightBriefly(sendBtn, '#0a66c2');
+      realisticClick(sendBtn);
       await wait(rand(800, 1400));
-      return { ok: true, status: 'invited', note: false };
+      return { ok: true, status: 'invited', note: !!(note && note.trim()) };
     }
 
-    // 5. Couldn't complete — likely an email-verification modal. Close it.
-    try {
-      const close = await findButton(1500, (b) => /dismiss|close/i.test(b.getAttribute('aria-label') || ''));
-      if (close) realisticClick(close);
-      else document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', code: 'Escape' }));
-    } catch (_) {}
-    return { ok: false, status: 'failed', error: 'Could not complete invite (email required or page layout changed)' };
+    console.warn(P, 'no Send button in dialog');
+    closeDialog();
+    return { ok: false, status: 'failed', error: 'Invite dialog had no Send button (layout/locale changed)' };
   }
 
   function realisticClick(btn) {

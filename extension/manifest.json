@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Bibix LinkedIn AI Booster",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "AI-powered LinkedIn comments, replies, contributions and automated outreach — synced to your Bibix Monday workspace.",
   "permissions": ["storage", "activeTab", "scripting"],
   "host_permissions": [
