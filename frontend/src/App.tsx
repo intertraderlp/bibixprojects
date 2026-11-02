@@ -20,6 +20,7 @@ import InvoicePage from './pages/InvoicePage';
 import PublicFormPage from './pages/PublicFormPage';
 import InstagramPage from './pages/InstagramPage';
 import LinkedInPage from './pages/LinkedInPage';
+import MarketingPage from './pages/MarketingPage';
 import BackupsPage from './pages/BackupsPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
@@ -64,6 +65,7 @@ export default function App() {
         <Route path="crm" element={<ModuleRoute module="crm"><CRMPage /></ModuleRoute>} />
         <Route path="invoices" element={<InvoicePage />} />
         <Route path="instagram" element={<Navigate to="/marketing/instagram" replace />} />
+        <Route path="marketing/integrations" element={<ModuleRoute module="marketing"><MarketingPage /></ModuleRoute>} />
         <Route path="marketing/instagram" element={<ModuleRoute module="instagram"><InstagramPage /></ModuleRoute>} />
         <Route path="marketing/linkedin"  element={<ModuleRoute module="linkedin"><LinkedInPage /></ModuleRoute>} />
         <Route path="backups" element={<BackupsPage />} />

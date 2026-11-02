@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Plus, ChevronDown, ChevronRight, LayoutGrid, Bell, Search, Settings, LogOut, Home, Trash2, Users, Shield, Calendar, Bot, CalendarDays, ContactRound, FileText, Megaphone, Instagram, Linkedin, Database, Pencil, Check, X } from 'lucide-react';
+import { Plus, ChevronDown, ChevronRight, LayoutGrid, Bell, Search, Settings, LogOut, Home, Trash2, Users, Shield, Calendar, Bot, CalendarDays, ContactRound, FileText, Megaphone, Instagram, Linkedin, Database, Pencil, Check, X, PlugZap } from 'lucide-react';
 import { useWorkspaceStore } from '../../store/workspaceStore';
 import { useAuthStore } from '../../store/authStore';
 import Avatar from '../ui/Avatar';
@@ -99,6 +99,9 @@ export default function Sidebar() {
             </button>
             {marketingOpen && (
               <div className="ml-4">
+                <Link to="/marketing/integrations" className="flex items-center gap-3 px-4 py-2 text-white/60 hover:text-white hover:bg-monday-sidebar-hover rounded-lg mx-2 text-sm">
+                  <PlugZap size={13} /> Integrations &amp; Inbox
+                </Link>
                 {/* Social Media */}
                 <button
                   onClick={() => setSocialMediaOpen(o => !o)}
