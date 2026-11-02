@@ -64,6 +64,7 @@ app.use('/api/linkedin',       require('./routes/linkedin'));
 app.use('/api/contacts',       require('./routes/contacts'));
 app.use('/api/ai',             require('./routes/ai'));
 app.use('/api/bibixchat',      require('./routes/bibixchat'));
+app.use('/api/marketing',      require('./routes/marketing'));
 const biRouter = require('./routes/bi');
 app.use('/api/bi',             biRouter);
 // Start the BI sheet-sync scheduler (refreshes datasources on their interval)

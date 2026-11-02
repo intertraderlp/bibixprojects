@@ -22,6 +22,7 @@ const CRMPage = lazy(() => import('./pages/CRMPage'));
 const InvoicePage = lazy(() => import('./pages/InvoicePage'));
 const PublicFormPage = lazy(() => import('./pages/PublicFormPage'));
 const InstagramPage = lazy(() => import('./pages/InstagramPage'));
+const MarketingPage = lazy(() => import('./pages/MarketingPage'));
 const LinkedInPage = lazy(() => import('./pages/LinkedInPage'));
 const BackupsPage = lazy(() => import('./pages/BackupsPage'));
 const ReportsPage = lazy(() => import('./pages/ReportsPage'));
@@ -110,6 +111,7 @@ export default function App() {
         <Route path="invoices" element={S(<InvoicePage />)} />
         <Route path="bi" element={<ModuleRoute module="reports">{S(<ReportsPage />)}</ModuleRoute>} />
         <Route path="instagram" element={<Navigate to="/marketing/instagram" replace />} />
+        <Route path="marketing/integrations" element={<ModuleRoute module="marketing">{S(<MarketingPage />)}</ModuleRoute>} />
         <Route path="marketing/instagram" element={<ModuleRoute module="instagram">{S(<InstagramPage />)}</ModuleRoute>} />
         <Route path="marketing/linkedin"  element={<ModuleRoute module="linkedin">{S(<LinkedInPage />)}</ModuleRoute>} />
         <Route path="backups" element={S(<BackupsPage />)} />
