@@ -64,6 +64,7 @@ const instagramRouter = require('./routes/instagram');
 app.use('/api/instagram',      instagramRouter);
 app.use('/api/linkedin',       require('./routes/linkedin'));
 app.use('/api/contacts',       require('./routes/contacts'));
+app.use('/api/marketing',      require('./routes/marketing'));
 app.use('/api/outreach',       require('./routes/outreach'));
 app.use('/api/ai',             require('./routes/ai'));
 
