@@ -1053,7 +1053,7 @@ export default function TableView() {
             className="text-sm border border-gray-300 rounded-lg px-2 py-1.5 max-w-[150px]">
             <option value="">column…</option>
             {(board?.columns || [])
-              .filter(c => !['formula', 'time_tracking', 'attachments', 'person', 'timeline'].includes(c.type))
+              .filter(c => !['formula', 'time_tracking', 'attachments', 'person', 'timeline', 'last_updated'].includes(c.type))
               .map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
           </select>
 

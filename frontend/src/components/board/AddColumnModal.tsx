@@ -3,7 +3,7 @@ import { useBoardStore } from '../../store/boardStore';
 import Modal from '../ui/Modal';
 import FormulaEditor from './FormulaEditor';
 import type { ColumnType } from '../../types';
-import { Hash, Type, Calendar, User, CheckSquare, Tag, Link, Star, Paperclip, Calculator, Timer } from 'lucide-react';
+import { Hash, Type, Calendar, User, CheckSquare, Tag, Link, Star, Paperclip, Calculator, Timer, History } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface Props { onClose: () => void; }
@@ -21,6 +21,7 @@ const COLUMN_TYPES: { type: ColumnType; label: string; icon: React.ReactNode; de
   { type: 'attachments', label: 'Attachments', icon: <Paperclip size={18} />, desc: 'Files & images' },
   { type: 'formula', label: 'Formula', icon: <Calculator size={18} />, desc: 'Compute from columns' },
   { type: 'time_tracking', label: 'Time tracking', icon: <Timer size={18} />, desc: 'Start / stop timer' },
+  { type: 'last_updated', label: 'Last updated', icon: <History size={18} />, desc: 'When & who changed the item' },
 ];
 
 export default function AddColumnModal({ onClose }: Props) {

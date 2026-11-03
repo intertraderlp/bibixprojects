@@ -46,8 +46,8 @@ router.put('/:id', authenticate, (req, res) => {
   if (!canAccessBoard(item.board_id, req.user.id)) return res.status(403).json({ error: 'Access denied' });
 
   const { name, group_id } = req.body;
-  db.prepare('UPDATE items SET name = COALESCE(?, name), group_id = COALESCE(?, group_id), updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-    .run(name || null, group_id || null, req.params.id);
+  db.prepare('UPDATE items SET name = COALESCE(?, name), group_id = COALESCE(?, group_id), updated_at = CURRENT_TIMESTAMP, updated_by = ? WHERE id = ?')
+    .run(name || null, group_id || null, req.user.id, req.params.id);
 
   // Promote / demote: only when the client explicitly sends parent_item_id.
   // null  -> promote a subtask to a top-level task
@@ -69,14 +69,14 @@ router.put('/:id', authenticate, (req, res) => {
       // Subtasks live in their parent's group; append to the end of its subtasks.
       const mp = db.prepare('SELECT MAX(position) AS mp FROM items WHERE group_id = ? AND parent_item_id IS ?').get(parent.group_id, newParent);
       const pos = (mp?.mp ?? -1) + 1;
-      db.prepare('UPDATE items SET parent_item_id = ?, group_id = ?, position = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-        .run(newParent, parent.group_id, pos, req.params.id);
+      db.prepare('UPDATE items SET parent_item_id = ?, group_id = ?, position = ?, updated_at = CURRENT_TIMESTAMP, updated_by = ? WHERE id = ?')
+        .run(newParent, parent.group_id, pos, req.user.id, req.params.id);
     } else {
       // Promote to a top-level task; append to the end of its group's top-level items.
       const mp = db.prepare('SELECT MAX(position) AS mp FROM items WHERE group_id = ? AND parent_item_id IS NULL').get(item.group_id);
       const pos = (mp?.mp ?? -1) + 1;
-      db.prepare('UPDATE items SET parent_item_id = NULL, position = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-        .run(pos, req.params.id);
+      db.prepare('UPDATE items SET parent_item_id = NULL, position = ?, updated_at = CURRENT_TIMESTAMP, updated_by = ? WHERE id = ?')
+        .run(pos, req.user.id, req.params.id);
     }
   }
 
@@ -112,7 +112,7 @@ router.put('/:id/values', authenticate, (req, res) => {
     ON CONFLICT(item_id, column_id) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
   `).run(valueId, req.params.id, column_id, value !== undefined ? String(value) : null);
 
-  db.prepare('UPDATE items SET updated_at = CURRENT_TIMESTAMP WHERE id = ?').run(req.params.id);
+  db.prepare('UPDATE items SET updated_at = CURRENT_TIMESTAMP, updated_by = ? WHERE id = ?').run(req.user.id, req.params.id);
 
   try {
     runAutomations(item.board_id, 'value_changed', {
@@ -156,8 +156,8 @@ router.put('/:id/move', authenticate, (req, res) => {
   if (!canAccessBoard(item.board_id, req.user.id)) return res.status(403).json({ error: 'Access denied' });
 
   const { group_id, position } = req.body;
-  db.prepare('UPDATE items SET group_id = COALESCE(?, group_id), position = COALESCE(?, position), updated_at = CURRENT_TIMESTAMP WHERE id = ?')
-    .run(group_id || null, position !== undefined ? position : null, req.params.id);
+  db.prepare('UPDATE items SET group_id = COALESCE(?, group_id), position = COALESCE(?, position), updated_at = CURRENT_TIMESTAMP, updated_by = ? WHERE id = ?')
+    .run(group_id || null, position !== undefined ? position : null, req.user.id, req.params.id);
 
   res.json(db.prepare('SELECT * FROM items WHERE id = ?').get(req.params.id));
 });

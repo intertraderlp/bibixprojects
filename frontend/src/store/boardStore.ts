@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import api from '../api/client';
+import { useAuthStore } from './authStore';
 import type { BoardData, Column, Group, Item, ItemValue, ColumnType, MessageTemplate } from '../types';
 
 // ── Value lookup caches ───────────────────────────────────────────────────────
@@ -91,13 +92,18 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     // Optimistic: flip the value in local state immediately so the UI reflects the
     // change instantly, then persist in the background. Revert if the save fails.
     const prevValues = get().board?.values;
+    const prevItems = get().board?.items;
+    const nowIso = new Date().toISOString();
+    const meId = useAuthStore.getState().user?.id || null;
     set(state => {
       if (!state.board) return state;
       const existing = state.board.values.findIndex(v => v.item_id === itemId && v.column_id === columnId);
       const newValues = [...state.board.values];
       if (existing >= 0) newValues[existing] = { ...newValues[existing], value };
       else newValues.push({ id: `tmp-${itemId}-${columnId}`, item_id: itemId, column_id: columnId, value } as typeof newValues[number]);
-      return { board: { ...state.board, values: newValues } };
+      // Bump the item's last-modified stamp so a "Last updated" column reacts live.
+      const newItems = state.board.items.map(it => it.id === itemId ? { ...it, updated_at: nowIso, updated_by: meId } : it);
+      return { board: { ...state.board, values: newValues, items: newItems } };
     });
     try {
       const { data } = await api.put(`/items/${itemId}/values`, { column_id: columnId, value });
@@ -111,7 +117,7 @@ export const useBoardStore = create<BoardState>((set, get) => ({
         return { board: { ...state.board, values: newValues } };
       });
     } catch (e) {
-      if (prevValues) set(state => state.board ? { board: { ...state.board, values: prevValues } } : state);
+      if (prevValues) set(state => state.board ? { board: { ...state.board, values: prevValues, items: prevItems || state.board.items } } : state);
       throw e;
     }
   },

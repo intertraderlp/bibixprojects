@@ -86,6 +86,7 @@ const migrations = [
   "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'",
   "ALTER TABLE workspace_members ADD COLUMN access TEXT NOT NULL DEFAULT 'edit'",
   "ALTER TABLE items ADD COLUMN parent_item_id TEXT",
+  "ALTER TABLE items ADD COLUMN updated_by TEXT",
   "ALTER TABLE board_columns ADD COLUMN width INTEGER NOT NULL DEFAULT 140",
   "ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '{}'",
   // super_admin role: no schema change needed — role column already TEXT

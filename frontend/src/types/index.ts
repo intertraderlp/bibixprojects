@@ -40,7 +40,7 @@ export interface UserGroup {
   created_at?: string;
 }
 
-export type ColumnType = 'text' | 'status' | 'person' | 'date' | 'number' | 'checkbox' | 'tags' | 'priority' | 'link' | 'timeline' | 'attachments' | 'formula' | 'time_tracking';
+export type ColumnType = 'text' | 'status' | 'person' | 'date' | 'number' | 'checkbox' | 'tags' | 'priority' | 'link' | 'timeline' | 'attachments' | 'formula' | 'time_tracking' | 'last_updated';
 
 export interface StatusOption {
   label: string;
@@ -94,6 +94,7 @@ export interface Item {
   created_by: string;
   created_at: string;
   updated_at: string;
+  updated_by?: string | null;
   parent_item_id?: string | null;
 }
 
