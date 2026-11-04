@@ -66,22 +66,15 @@
     const link = absUrl(linkEl && linkEl.getAttribute('href'));
     const title = txt(linkEl) || qText(card, '.item-link');
 
-    // Price — the current sale price. Try price elements first (skipping any €/m²
-    // figure and the struck-through "old" price), then fall back to the first
-    // "NNN.NNN €" in the card text that isn't a €/m² value.
+    // Price — the current sale price. The `.item-price` block often bundles the
+    // price together with the €/m² figure (e.g. "263.000€ 3.757 €/m²") and, on
+    // discounted listings, the new + old price. Take the FIRST "NNN.NNN €" that is
+    // NOT a €/m² value — that's always the current price (and the discounted one).
     const allText = card.innerText || '';
+    const priceText = qText(card, '.item-price') || allText;
     let price = '';
-    const priceEls = card.querySelectorAll('.item-price, [class*="price"]');
-    for (const el of priceEls) {
-      const t = txt(el);
-      if (!t || /\/\s*m/i.test(t)) continue;                 // skip €/m²
-      if (/line-through/i.test(el.getAttribute('style') || '')) continue; // skip struck old price
-      if (/\d/.test(t)) { price = t; break; }
-    }
-    if (!price) {
-      const m = allText.match(/([\d][\d.\s]{2,}\d)\s*€(?!\s*\/?\s*m)/); // amount in € not followed by /m²
-      if (m) price = m[1];
-    }
+    const pm = priceText.match(/([\d][\d.\s]*\d)\s*€(?!\s*\/?\s*m)/i); // € amount not followed by /m²
+    if (pm) price = pm[1].replace(/\s+/g, '');
 
     // €/m² — sometimes shown; otherwise computed later from price/size.
     let pricePerM2 = '';
