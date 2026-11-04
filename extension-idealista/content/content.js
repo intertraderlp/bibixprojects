@@ -66,11 +66,25 @@
     const link = absUrl(linkEl && linkEl.getAttribute('href'));
     const title = txt(linkEl) || qText(card, '.item-link');
 
-    const price = qText(card, '.item-price') || qText(card, '[class*="price"]');
+    // Price — the current sale price. Try price elements first (skipping any €/m²
+    // figure and the struck-through "old" price), then fall back to the first
+    // "NNN.NNN €" in the card text that isn't a €/m² value.
+    const allText = card.innerText || '';
+    let price = '';
+    const priceEls = card.querySelectorAll('.item-price, [class*="price"]');
+    for (const el of priceEls) {
+      const t = txt(el);
+      if (!t || /\/\s*m/i.test(t)) continue;                 // skip €/m²
+      if (/line-through/i.test(el.getAttribute('style') || '')) continue; // skip struck old price
+      if (/\d/.test(t)) { price = t; break; }
+    }
+    if (!price) {
+      const m = allText.match(/([\d][\d.\s]{2,}\d)\s*€(?!\s*\/?\s*m)/); // amount in € not followed by /m²
+      if (m) price = m[1];
+    }
 
     // €/m² — sometimes shown; otherwise computed later from price/size.
     let pricePerM2 = '';
-    const allText = card.innerText || '';
     const ppm = allText.match(/([\d.,]+)\s*€\s*\/\s*m/i);
     if (ppm) pricePerM2 = ppm[1];
 
@@ -105,36 +119,54 @@
     return { link, title, price, price_per_m2: pricePerM2, rooms, size, address, area, description, phone: '' };
   }
 
-  // ── Phone reveal (throttled, optional) ───────────────────────────────────────
+  // ── Phone capture (NEVER dials) ──────────────────────────────────────────────
+  // The number lives in a `tel:` href (idealista puts it there before the cosmetic
+  // "reveal"). We READ the href — we never click a tel: link, because clicking one
+  // makes the OS place a call.
+  function numFromTelHref(el) {
+    if (!el) return '';
+    const href = el.getAttribute('href') || '';
+    if (!/^tel:/i.test(href)) return '';
+    const num = decodeURIComponent(href).replace(/^tel:/i, '').trim();
+    return num.replace(/\D/g, '').length >= 9 ? num : '';
+  }
+
   function findPhoneInCard(card) {
-    const tel = card.querySelector('a[href^="tel:"]');
-    if (tel) return tel.getAttribute('href').replace(/^tel:/, '').trim();
-    // Revealed numbers often sit in a span after the click.
-    const m = (card.innerText || '').match(/(?:\+?\d[\d\s().-]{7,}\d)/);
-    if (m) {
-      const digits = m[0].replace(/[^\d+]/g, '');
-      if (digits.replace(/\D/g, '').length >= 9) return m[0].trim();
+    // 1) Any tel: link → read its href (no click, no call).
+    for (const a of card.querySelectorAll('a[href^="tel:"], a[href^="TEL:"]')) {
+      const n = numFromTelHref(a);
+      if (n) return n;
     }
+    // 2) A visible, already-revealed number in text.
+    const m = (card.innerText || '').match(/(?:\+?\d[\d\s().-]{7,}\d)/);
+    if (m && m[0].replace(/\D/g, '').length >= 9) return m[0].trim();
     return '';
   }
 
+  // Is this element a phone-dialing link we must never click?
+  const isTelLink = (el) => el && el.tagName === 'A' && /^tel:/i.test(el.getAttribute('href') || '');
+
   async function revealPhone(card) {
-    // Already visible?
+    // Read whatever is already in the DOM first — covers the common case with no click.
     const existing = findPhoneInCard(card);
     if (existing) return existing;
 
-    const btn = card.querySelector(
-      'a[href*="phone"], button[class*="phone"], .icon-phone, ._btn-icon-phone, [class*="see-phone"], [class*="ver-telefono"]'
-    ) || Array.from(card.querySelectorAll('a,button,span')).find(el => /ver\s*tel[eé]fono/i.test(el.textContent || ''));
+    // Find a reveal trigger that is NOT a tel: link (so clicking it can't dial).
+    const candidates = [
+      ...card.querySelectorAll('button[class*="phone"], .icon-phone, ._btn-icon-phone, [class*="see-phone"]'),
+      ...card.querySelectorAll('button, span, div'),
+    ];
+    const trigger = candidates.find(el => !isTelLink(el) && /ver\s*tel[eé]fono/i.test(el.textContent || ''))
+      || candidates.find(el => !isTelLink(el) && /phone|telefono|teléfono/i.test(el.className || ''));
 
-    if (!btn) return '';
+    if (!trigger || isTelLink(trigger)) return ''; // nothing safe to click → skip (never dial)
     try {
-      btn.scrollIntoView({ block: 'center' });
+      trigger.scrollIntoView({ block: 'center' });
       await sleep(rand(250, 600));
-      btn.click();
+      trigger.click(); // safe: not a tel: link, just loads the number into the DOM
     } catch { return ''; }
 
-    // Wait for the number to appear.
+    // Wait for the number to appear in a tel: href, then read it (no further clicks).
     for (let i = 0; i < 12; i++) {
       await sleep(rand(250, 450));
       const found = findPhoneInCard(card);

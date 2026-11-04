@@ -136,6 +136,23 @@ router.post('/ingest', authenticateFlexible, (req, res) => {
 
   const { map: cols, created } = ensureColumns(board_id);
   const groupId = ensureGroup(board_id, cleanStr(group_name) || 'Idealista');
+
+  // Resolve the board's Status column and make sure it has a "New" option, so
+  // freshly-scraped items land as "New". Prefers a column literally named "Status".
+  const statusColId = (() => {
+    const statusCols = db.prepare("SELECT * FROM board_columns WHERE board_id = ? AND type = 'status'").all(board_id);
+    if (!statusCols.length) return null;
+    const col = statusCols.find(c => c.name.trim().toLowerCase() === 'status') || statusCols[0];
+    let settings = {};
+    try { settings = JSON.parse(col.settings || '{}'); } catch { settings = {}; }
+    const options = Array.isArray(settings.options) ? settings.options : [];
+    if (!options.some(o => String(o.label).trim().toLowerCase() === 'new')) {
+      options.push({ label: 'New', color: '#579bfc' });
+      settings.options = options;
+      db.prepare('UPDATE board_columns SET settings = ? WHERE id = ?').run(JSON.stringify(settings), col.id);
+    }
+    return col.id;
+  })();
   const linkColId = cols.link;
   const src = cleanStr(source) || 'idealista';
   const scrapedAt = todayISO();
@@ -207,6 +224,7 @@ router.post('/ingest', authenticateFlexible, (req, res) => {
         const itemId = uuidv4();
         insertItem.run(itemId, groupId, board_id, name, ++maxPos, req.user.id);
         for (const [colId, v] of values) upsertValue.run(uuidv4(), itemId, colId, v);
+        if (statusColId) upsertValue.run(uuidv4(), itemId, statusColId, 'New'); // new items → "New"
         existingLinks.set(link, itemId);
         imported++;
       }

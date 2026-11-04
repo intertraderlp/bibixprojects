@@ -8,7 +8,8 @@ const DEFAULT_API_BASE = 'http://localhost:3001';
 
 async function getApiBase() {
   const { apiBase } = await chrome.storage.local.get('apiBase');
-  return apiBase || DEFAULT_API_BASE;
+  // Strip trailing slashes so "https://host/" + "/api/..." doesn't become "host//api/...".
+  return (apiBase || DEFAULT_API_BASE).replace(/\/+$/, '');
 }
 async function getToken() {
   const { token } = await chrome.storage.local.get('token');
@@ -180,17 +181,25 @@ const handlers = {
   },
 };
 
-// Tell the content script in a tab to scrape the page it's on.
+// Tell the content script in a tab to scrape the page it's on. If the content
+// script isn't there (e.g. the extension was reloaded after the tab loaded),
+// inject it on the fly and retry — so Start works without reloading the page.
 async function kickTab(tabId) {
   const job = await getJob();
   if (!job || !job.active) return;
+  const msg = { type: 'SCRAPE_PAGE', revealPhones: job.revealPhones };
   try {
-    await chrome.tabs.sendMessage(tabId, {
-      type: 'SCRAPE_PAGE',
-      revealPhones: job.revealPhones,
-    });
+    await chrome.tabs.sendMessage(tabId, msg);
   } catch (_) {
-    // Content script may not be injected yet; it will announce READY on load.
+    try {
+      await chrome.scripting.insertCSS({ target: { tabId }, files: ['content/content.css'] }).catch(() => {});
+      await chrome.scripting.executeScript({ target: { tabId }, files: ['content/content.js'] });
+      // Give the freshly-injected script a tick to register its listener.
+      await new Promise(r => setTimeout(r, 300));
+      await chrome.tabs.sendMessage(tabId, msg);
+    } catch (e2) {
+      await setJob({ active: false, status: 'error', lastError: 'Could not reach the page — reload the idealista tab, then Start.' });
+    }
   }
 }
 
