@@ -218,6 +218,12 @@ router.post('/ingest', authenticateFlexible, (req, res) => {
       if (existingId) {
         // Update only non-empty scraped fields (don't wipe phone with a later blank scrape).
         for (const [colId, v] of values) upsertValue.run(uuidv4(), existingId, colId, v);
+        // Backfill Status="New" only when the row has no status yet — never overwrite
+        // a status the user changed by hand.
+        if (statusColId) {
+          const cur = db.prepare('SELECT value FROM item_values WHERE item_id = ? AND column_id = ?').get(existingId, statusColId);
+          if (!cur || cur.value == null || cur.value === '') upsertValue.run(uuidv4(), existingId, statusColId, 'New');
+        }
         touchItem.run(existingId);
         updated++;
       } else {
