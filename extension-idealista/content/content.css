@@ -1,0 +1,16 @@
+#bibix-scraper-pill {
+  position: fixed;
+  z-index: 2147483647;
+  bottom: 18px;
+  right: 18px;
+  display: none;
+  max-width: 320px;
+  padding: 10px 14px;
+  font: 600 13px/1.3 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  color: #fff;
+  background: #0073ea;
+  border-radius: 10px;
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+#bibix-scraper-pill[data-kind="done"]  { background: #00c875; }
+#bibix-scraper-pill[data-kind="error"] { background: #e2445c; }
