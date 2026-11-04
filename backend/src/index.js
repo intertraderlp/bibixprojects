@@ -25,11 +25,14 @@ const extensionCors = cors({
   },
   credentials: false,
 });
-app.use('/api/auth',      extensionCors);
-app.use('/api/instagram', extensionCors);
-app.use('/api/linkedin',  extensionCors);
-app.use('/api/contacts',  extensionCors);
-app.use('/api/outreach',  extensionCors);
+app.use('/api/auth',       extensionCors);
+app.use('/api/instagram',  extensionCors);
+app.use('/api/linkedin',   extensionCors);
+app.use('/api/contacts',   extensionCors);
+app.use('/api/outreach',   extensionCors);
+app.use('/api/scraper',    extensionCors);
+app.use('/api/workspaces', extensionCors); // browser scraper extension lists workspaces
+app.use('/api/boards',     extensionCors); // browser scraper extension lists boards
 
 app.use(express.json({ limit: '20mb' }));
 
@@ -66,6 +69,7 @@ app.use('/api/linkedin',       require('./routes/linkedin'));
 app.use('/api/contacts',       require('./routes/contacts'));
 app.use('/api/outreach',       require('./routes/outreach'));
 app.use('/api/ai',             require('./routes/ai'));
+app.use('/api/scraper',        require('./routes/scraper'));
 
 // Start Telegram bot (only if TELEGRAM_BOT_TOKEN is set)
 const tgBot = require('./bot/telegram');

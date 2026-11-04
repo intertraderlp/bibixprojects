@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header>
+    <span class="logo">🏠</span>
+    <div>
+      <div class="title">Bibix Idealista Scraper</div>
+      <div class="sub" id="userLine">Not signed in</div>
+    </div>
+  </header>
+
+  <!-- Login view -->
+  <section id="loginView" class="view">
+    <label>Bibix URL</label>
+    <input id="apiBase" type="text" placeholder="http://localhost:3001" />
+    <label>Email</label>
+    <input id="email" type="email" placeholder="you@company.com" />
+    <label>Password</label>
+    <input id="password" type="password" placeholder="••••••••" />
+    <button id="loginBtn" class="primary">Sign in</button>
+    <div id="loginError" class="error"></div>
+  </section>
+
+  <!-- Scrape view -->
+  <section id="scrapeView" class="view hidden">
+    <label>Destination board</label>
+    <div class="row">
+      <select id="boardSelect"></select>
+      <button id="refreshBoards" class="icon" title="Reload boards">⟳</button>
+    </div>
+
+    <label class="check">
+      <input id="revealPhones" type="checkbox" />
+      Reveal phone numbers (slower, higher block risk)
+    </label>
+
+    <label>Max pages <span class="hint">(0 = all)</span></label>
+    <input id="maxPages" type="number" min="0" value="0" />
+
+    <button id="startBtn" class="primary">Scrape all pages → board</button>
+    <button id="stopBtn" class="danger hidden">Stop</button>
+
+    <div id="progress" class="progress hidden">
+      <div class="stat"><b id="pStatus">—</b><span>status</span></div>
+      <div class="stat"><b id="pPages">0</b><span>pages</span></div>
+      <div class="stat"><b id="pImported">0</b><span>new</span></div>
+      <div class="stat"><b id="pUpdated">0</b><span>updated</span></div>
+    </div>
+    <div id="jobError" class="error"></div>
+
+    <div class="footer">
+      <a href="#" id="logout">Sign out</a>
+      <span id="warn" class="warn">Open an idealista results page in this tab.</span>
+    </div>
+  </section>
+
+  <script src="popup.js"></script>
+</body>
+</html>
