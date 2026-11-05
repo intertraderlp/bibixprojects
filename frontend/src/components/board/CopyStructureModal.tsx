@@ -24,8 +24,10 @@ export default function CopyStructureModal({ sourceBoardId, sourceBoardName, onC
     setBusy(true);
     try {
       const { data } = await api.post(`/boards/${sourceBoardId}/copy-structure`, { targetBoardId: targetId });
-      if (data.added > 0) toast.success(`Added ${data.added} column${data.added > 1 ? 's' : ''} to the target board`);
-      else toast.success('That board already has all of these columns');
+      const parts: string[] = [];
+      if (data.added > 0) parts.push(`added ${data.added} column${data.added > 1 ? 's' : ''}`);
+      if (data.updated > 0) parts.push(`updated ${data.updated}`);
+      toast.success(parts.length ? `Copied format — ${parts.join(', ')}` : 'That board already matches this layout');
       onClose();
     } catch (e) {
       const msg = (e as { response?: { data?: { error?: string } } })?.response?.data?.error;
@@ -38,7 +40,8 @@ export default function CopyStructureModal({ sourceBoardId, sourceBoardName, onC
       <div className="p-6 space-y-4">
         <p className="text-sm text-gray-500">
           Copy the column layout of <span className="font-medium text-gray-700">{sourceBoardName}</span> onto another board.
-          Columns that board already has (same name &amp; type) are skipped. Rows and values aren&apos;t touched.
+          New columns are added; columns that board already has (same name &amp; type) keep their place but get this board&apos;s
+          options (status / priority / checkbox choices). Rows and values aren&apos;t touched.
         </p>
         <div>
           <label className="block text-xs font-medium text-gray-500 mb-1">Target board</label>

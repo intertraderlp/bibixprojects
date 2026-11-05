@@ -119,19 +119,30 @@ router.post('/:id/copy-structure', authenticate, (req, res) => {
 
   const sourceCols = db.prepare('SELECT * FROM board_columns WHERE board_id = ? ORDER BY position ASC').all(sourceId);
   const targetCols = db.prepare('SELECT * FROM board_columns WHERE board_id = ?').all(targetBoardId);
-  const existing = new Set(targetCols.map(c => `${(c.name || '').toLowerCase()}\u0000${c.type}`));
+  // Match target columns by name+type so we update (not duplicate) existing ones.
+  const byKey = new Map(targetCols.map(c => [`${(c.name || '').toLowerCase()}\u0000${c.type}`, c]));
   let pos = targetCols.reduce((m, c) => Math.max(m, c.position), -1) + 1;
 
-  let added = 0;
+  let added = 0, updated = 0;
   for (const c of sourceCols) {
     const key = `${(c.name || '').toLowerCase()}\u0000${c.type}`;
-    if (existing.has(key)) continue;
-    existing.add(key);
-    db.prepare('INSERT INTO board_columns (id, board_id, name, type, settings, position, width) VALUES (?, ?, ?, ?, ?, ?, ?)')
-      .run(uuidv4(), targetBoardId, c.name, c.type, c.settings, pos++, c.width || 140);
-    added++;
+    const match = byKey.get(key);
+    if (match) {
+      // Column already exists on the target — sync its settings (e.g. status /
+      // priority / checkbox options) from the source so the format matches.
+      if ((match.settings || '{}') !== (c.settings || '{}')) {
+        db.prepare('UPDATE board_columns SET settings = ? WHERE id = ?').run(c.settings, match.id);
+        updated++;
+      }
+    } else {
+      const nid = uuidv4();
+      db.prepare('INSERT INTO board_columns (id, board_id, name, type, settings, position, width) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(nid, targetBoardId, c.name, c.type, c.settings, pos++, c.width || 140);
+      byKey.set(key, { id: nid, settings: c.settings });
+      added++;
+    }
   }
-  res.json({ ok: true, added, skipped: sourceCols.length - added });
+  res.json({ ok: true, added, updated });
 });
 
 router.delete('/:id', authenticate, (req, res) => {
