@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "Instagram Extension",
+  "version": "1.53.0",
+  "description": "Engagement, daily follower counts, post scheduling, profile research, scheduled action campaigns, and downloader for Instagram — synced to Bibix.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": "icon.png"
+  },
+  "icons": {
+    "16": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "web_accessible_resources": [{ "resources": ["history.html", "dashboard.html", "campaigns.html"], "matches": ["<all_urls>"] }],
+  "permissions": ["activeTab", "scripting", "storage", "tabs", "downloads", "webRequest", "alarms"],
+  "host_permissions": [
+    "https://www.instagram.com/*",
+    "https://*.cdninstagram.com/*",
+    "https://*.fbcdn.net/*",
+    "https://api.groq.com/*",
+    "https://bibix.ailabstech.com/*",
+    "https://staging.bibix.ailabstech.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://www.instagram.com/*"],
+      "js": ["fetch-hook.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://www.instagram.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

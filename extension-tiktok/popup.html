@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Bibix TikTok</title>
+  <style>
+    body {
+      width: 320px;
+      font-family: -apple-system, system-ui, sans-serif;
+      margin: 0;
+      padding: 16px;
+      background: #0f0f0f;
+      color: #f1f1f1;
+    }
+    h1 {
+      font-size: 15px;
+      font-weight: 700;
+      margin: 0 0 4px;
+      background: linear-gradient(90deg, #ff0050, #00f2ea);
+      -webkit-background-clip: text;
+      background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+    .env {
+      font-size: 10px;
+      color: #888;
+      margin-bottom: 12px;
+    }
+    label {
+      display: block;
+      font-size: 11px;
+      color: #aaa;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 4px;
+      margin-top: 12px;
+    }
+    input, textarea {
+      width: 100%;
+      box-sizing: border-box;
+      background: #1a1a1a;
+      border: 1px solid #333;
+      color: #f1f1f1;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font-size: 13px;
+      font-family: inherit;
+    }
+    input:focus, textarea:focus {
+      outline: none;
+      border-color: #ff0050;
+    }
+    button {
+      width: 100%;
+      padding: 10px;
+      border: none;
+      border-radius: 6px;
+      background: linear-gradient(90deg, #ff0050, #00f2ea);
+      color: #fff;
+      font-weight: 600;
+      font-size: 13px;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+    button:disabled {
+      opacity: 0.5;
+      cursor: default;
+    }
+    button.secondary {
+      background: #262626;
+      border: 1px solid #333;
+    }
+    #status {
+      margin-top: 12px;
+      padding: 8px;
+      border-radius: 6px;
+      background: #1a1a1a;
+      font-size: 11px;
+      color: #ccc;
+      min-height: 16px;
+      max-height: 120px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+      align-items: end;
+    }
+    .row > * { flex: 1; }
+  </style>
+</head>
+<body>
+  <h1>Bibix · TikTok</h1>
+  <div class="env" id="env">Not connected</div>
+
+  <label>API Token</label>
+  <input type="password" id="token" placeholder="Paste your Bibix token" />
+  <div class="row" style="margin-top: 6px;">
+    <button class="secondary" id="saveToken" style="width: auto;">Save token</button>
+  </div>
+
+  <label>Count</label>
+  <input type="number" id="count" value="10" min="1" max="100" />
+
+  <button id="btnLike">❤️ Like N videos</button>
+
+  <label>Reply text (one per line, random pick — ignored if AI is on)</label>
+  <textarea id="replies" rows="3" placeholder="🔥&#10;Love this&#10;Amazing"></textarea>
+  <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; margin-top: 8px;">
+    <input type="checkbox" id="useAI" style="width: auto; margin: 0;" />
+    <span style="text-transform: none; letter-spacing: 0; color: #ddd; font-size: 12px;">🤖 Use AI (config in Monday → Settings → AI providers)</span>
+  </label>
+  <button id="btnReply">💬 Reply N videos</button>
+
+  <button class="secondary" id="btnStop" style="margin-top: 6px;">⛔ Stop</button>
+
+  <div id="status">Idle.</div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

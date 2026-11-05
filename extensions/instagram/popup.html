@@ -1,0 +1,458 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="UTF-8" />
+    <title>Instagram Extension</title>
+    <style>
+      * { box-sizing: border-box; }
+
+      body {
+        font-family: Arial, sans-serif;
+        padding: 14px;
+        width: 260px;
+        background: #ffffff;
+        margin: 0;
+      }
+
+      h3 {
+        margin: 0 0 14px;
+        font-size: 16px;
+        text-align: center;
+        font-weight: bold;
+      }
+
+      .card {
+        background: #f7f7f7;
+        border-radius: 8px;
+        padding: 12px;
+        margin-bottom: 12px;
+      }
+
+      label {
+        font-size: 12px;
+        color: #555;
+        margin-bottom: 6px;
+        display: block;
+      }
+
+      input[type="number"] {
+        width: 100%;
+        padding: 9px;
+        font-size: 14px;
+        border-radius: 6px;
+        border: 1px solid #ccc;
+        margin-bottom: 10px;
+      }
+
+      textarea {
+        width: 100%;
+        padding: 8px;
+        border-radius: 6px;
+        border: 1px solid #ccc;
+        font-size: 13px;
+        resize: vertical;
+        min-height: 80px;
+      }
+
+      .row {
+        display: flex;
+        gap: 6px;
+        align-items: flex-start;
+        margin-bottom: 10px;
+      }
+
+      .row input { margin-bottom: 0; flex: 1; }
+
+      button {
+        width: 100%;
+        padding: 10px;
+        font-size: 14px;
+        border: none;
+        border-radius: 6px;
+        cursor: pointer;
+        background: #3897f0;
+        color: white;
+        font-weight: bold;
+      }
+
+      button.icon-btn {
+        width: 36px;
+        padding: 9px 0;
+        font-size: 18px;
+        background: #ddd;
+        color: #333;
+        font-weight: normal;
+        flex-shrink: 0;
+      }
+
+      button.secondary { background: #555; }
+      button.stop { background: #e63946; margin-top: 10px; }
+      button:hover { opacity: 0.9; }
+
+      #loader { display: none; text-align: center; }
+
+      .spinner {
+        width: 28px;
+        height: 28px;
+        border: 4px solid #ddd;
+        border-top: 4px solid #3897f0;
+        border-radius: 50%;
+        animation: spin 1s linear infinite;
+        margin: 10px auto;
+      }
+
+      @keyframes spin { to { transform: rotate(360deg); } }
+
+      #status { font-size: 13px; margin-top: 6px; color: #333; }
+
+      .hint {
+        font-size: 11px;
+        color: #888;
+        margin-top: 6px;
+      }
+
+      .toggle-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 8px;
+      }
+
+      .toggle-row label {
+        margin: 0;
+        font-size: 13px;
+        color: #333;
+        font-weight: bold;
+      }
+
+      .switch {
+        position: relative;
+        width: 38px;
+        height: 22px;
+      }
+
+      .switch input { display: none; }
+
+      .slider {
+        position: absolute;
+        inset: 0;
+        background: #ccc;
+        border-radius: 22px;
+        cursor: pointer;
+        transition: .3s;
+      }
+
+      .slider::before {
+        content: "";
+        position: absolute;
+        width: 16px;
+        height: 16px;
+        left: 3px;
+        bottom: 3px;
+        background: white;
+        border-radius: 50%;
+        transition: .3s;
+      }
+
+      input:checked + .slider { background: #3897f0; }
+      input:checked + .slider::before { transform: translateX(16px); }
+
+      input[type="password"] {
+        width: 100%;
+        padding: 8px;
+        font-size: 13px;
+        border-radius: 6px;
+        border: 1px solid #ccc;
+        margin-bottom: 6px;
+      }
+
+      .ai-badge {
+        display: inline-block;
+        background: #3897f0;
+        color: white;
+        font-size: 10px;
+        font-weight: bold;
+        padding: 2px 6px;
+        border-radius: 4px;
+        margin-left: 6px;
+        vertical-align: middle;
+      }
+
+      /* ---------- Collapsible sections ---------- */
+      details.section {
+        background: #f7f7f7;
+        border-radius: 8px;
+        margin-bottom: 8px;
+        overflow: hidden;
+        border: 1px solid #ececec;
+      }
+
+      details.section > summary {
+        list-style: none;
+        cursor: pointer;
+        padding: 10px 12px;
+        font-size: 13px;
+        font-weight: bold;
+        color: #222;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        user-select: none;
+        background: #fafafa;
+      }
+
+      details.section > summary::-webkit-details-marker { display: none; }
+
+      details.section > summary::after {
+        content: "▸";
+        font-size: 11px;
+        color: #888;
+        transition: transform .15s ease;
+        margin-left: 8px;
+      }
+
+      details.section[open] > summary::after { transform: rotate(90deg); }
+      details.section[open] > summary { border-bottom: 1px solid #ececec; }
+
+      details.section .section-body {
+        padding: 10px 12px 12px;
+      }
+
+      details.section .section-body .card {
+        margin-bottom: 8px;
+        background: #fff;
+        padding: 10px;
+        border-radius: 6px;
+        border: 1px solid #ececec;
+      }
+      details.section .section-body .card:last-child { margin-bottom: 0; }
+
+      details.section .section-body .card label:first-child {
+        font-weight: 600;
+        color: #333;
+      }
+
+      .section-icon { margin-right: 6px; }
+    </style>
+  </head>
+
+  <body>
+    <h3>Instagram Extension</h3>
+
+    <!--
+      Tiny clock-drift strip. Populated by popup.js on open via
+      /instagram/server-time. Useful for "why did my automation fire then?"
+      debugging when the extension PC and Monday server are in different
+      timezones or have skewed clocks.
+    -->
+    <div id="timeStrip" style="font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; color: #888; padding: 0 12px 6px 12px; margin-top: -4px;"></div>
+
+    <!--
+      Kill switch — global pause for ALL extension activity. When ON, nothing
+      runs: not batches, not automations, not scrape jobs, not scheduled
+      posts. Flip back OFF to resume. Persists in chrome.storage.local.
+      Visible at the top so it's always one click away in an emergency.
+    -->
+    <div id="killSwitchBar" style="padding: 8px 10px; margin-bottom: 10px; border-radius: 8px; background: #fff7e6; border: 1px solid #ffd591; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
+      <span style="font-size: 12px; color: #ad6800;">🛑 <b>Pause all activity</b></span>
+      <label class="switch" style="position: relative; display: inline-block; width: 38px; height: 20px;">
+        <input type="checkbox" id="killSwitchToggle" style="opacity: 0; width: 0; height: 0;" />
+        <span id="killSwitchSlider" style="position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: 0.2s; border-radius: 20px;"></span>
+      </label>
+    </div>
+
+    <div id="controls">
+      <!-- ─── Engagement ─── -->
+      <details class="section" data-section="engagement" open>
+        <summary><span><span class="section-icon">📈</span>Engagement</span></summary>
+        <div class="section-body">
+          <!-- Likes -->
+          <div class="card">
+            <label>Number of Comments to Like</label>
+            <input id="likeCount" type="number" min="1" max="100" placeholder="e.g. 10" />
+            <button id="runLikes">Run Random Likes</button>
+          </div>
+
+          <!-- Replies -->
+          <div class="card">
+            <label>Number of Comment Replies</label>
+            <div class="row">
+              <input id="commentCount" type="number" min="1" max="50" placeholder="e.g. 5" />
+              <button id="toggleComments" class="icon-btn" title="Add custom replies">+</button>
+            </div>
+
+            <div id="customCommentContainer" style="display:none; margin-bottom:10px;">
+              <textarea
+                id="customComments"
+                placeholder="Enter replies separated by commas or new lines&#10;e.g. Amazing!! 🔥, Love this 😍, So true 💯"
+              ></textarea>
+              <p class="hint">Separate replies with commas or new lines. Leave empty to use built-in defaults.</p>
+            </div>
+
+            <!-- AI toggle (provider is whatever the user set as default in
+                 Monday → Accounts → AI providers; supports Groq, OpenAI,
+                 Claude, Gemini, Grok, Perplexity, Z.AI, Mistral, DeepSeek) -->
+            <div class="toggle-row" style="margin-top:10px;">
+              <label>AI Replies</label>
+              <label class="switch">
+                <input type="checkbox" id="aiToggle" />
+                <span class="slider"></span>
+              </label>
+            </div>
+            <p id="aiHint" class="hint" style="display:none; margin: -4px 0 8px 0;">
+              Uses your default AI provider from
+              <a href="#" id="aiSettingsLink" style="color:#3897f0;">Monday → Accounts → AI providers</a>.
+            </p>
+
+            <button id="runComments" class="secondary">Reply Comments</button>
+          </div>
+
+          <!-- Follow -->
+          <div class="card">
+            <label>Number of People to Follow</label>
+            <input id="followCount" type="number" min="1" max="200" placeholder="e.g. 20" />
+            <button id="runFollow" style="background:#8a3ab9;">Follow People</button>
+          </div>
+
+          <!-- Unfollow -->
+          <div class="card">
+            <label>Number of People to Unfollow</label>
+            <input id="unfollowCount" type="number" min="1" max="200" placeholder="e.g. 10" />
+            <button id="runUnfollow" style="background:#e63946;">Unfollow People</button>
+          </div>
+        </div>
+      </details>
+
+      <!-- ─── Messaging ─── -->
+      <details class="section" data-section="messaging">
+        <summary><span><span class="section-icon">✉️</span>Messaging</span></summary>
+        <div class="section-body">
+          <div class="card">
+            <label>Auto-reply Unread DMs</label>
+            <p class="hint" style="margin-bottom:8px;">Open Instagram Direct Messages first, then click Reply. It will open each unread conversation and send an AI reply.</p>
+            <input id="dmCount" type="number" min="1" max="100" placeholder="e.g. 10" />
+            <button id="runReplyDMs" style="background:#2ecc71;">✉️ Reply Unread DMs</button>
+          </div>
+        </div>
+      </details>
+
+      <!-- ─── Insights ─── -->
+      <details class="section" data-section="insights">
+        <summary><span><span class="section-icon">🔔</span>Insights</span></summary>
+        <div class="section-body">
+          <div class="card">
+            <label>Scan Notifications</label>
+            <p class="hint" style="margin-bottom:8px;">Open the Notifications panel first, then click scan. It will read who liked, followed, commented or replied to you.</p>
+            <button id="runScanNotif" style="background:#f5a623;">🔔 Scan Notifications</button>
+          </div>
+          <div class="card">
+            <label>Snapshot Followers</label>
+            <p class="hint" style="margin-bottom:8px;">Open your profile → click <b>Followers</b> so the list modal is visible. Then click below — Bibix will diff this against the previous snapshot to show gains and losses.</p>
+            <button id="runSnapshotFollowers" style="background:#1abc9c;">👥 Snapshot Followers</button>
+          </div>
+        </div>
+      </details>
+
+      <!-- ─── Accounts (multi-profile management) ─── -->
+      <details class="section" data-section="accounts">
+        <summary><span><span class="section-icon">🪪</span>Accounts</span></summary>
+        <div class="section-body">
+          <div class="card">
+            <div style="margin-bottom:6px;font-size:12px;color:#666;">Current account</div>
+            <div id="acctCurrent" style="font-weight:bold;font-size:14px;margin-bottom:8px;">—</div>
+            <p class="hint" style="margin-bottom:8px;">
+              First add all your accounts to Instagram (Profile → Settings → <b>Add account</b>). Then click below to sync the list to Bibix.
+            </p>
+            <button id="runScanAccounts" style="background:#9b59b6;">🪪 Scan accounts from Instagram</button>
+          </div>
+          <div class="card" id="acctListCard" style="display:none;">
+            <div style="font-size:12px;color:#666;margin-bottom:8px;">Synced accounts <span id="acctCount" style="opacity:.6;"></span></div>
+            <div id="acctList" style="max-height:160px;overflow:auto;"></div>
+            <p class="hint" style="margin-top:8px;">Click an account to switch to it (5–12 min cooldown between switches).</p>
+          </div>
+        </div>
+      </details>
+
+      <!-- ─── Schedule ─── -->
+      <details class="section" data-section="schedule">
+        <summary><span><span class="section-icon">📅</span>Schedule</span></summary>
+        <div class="section-body">
+          <div class="card">
+            <div class="toggle-row">
+              <label>Automation on this device</label>
+              <label class="switch">
+                <input type="checkbox" id="automationToggle" />
+                <span class="slider"></span>
+              </label>
+            </div>
+            <p class="hint" id="automationHint" style="margin-bottom:8px;">
+              When ON, this device automatically publishes scheduled posts every 5 minutes — opening Instagram in a background tab if needed, switching accounts, and closing the tab when done. Turn OFF on devices that should not publish.
+            </p>
+            <button id="checkSchedNow" style="background:#3498db;">📅 Check schedule now</button>
+            <a id="openBibixSchedule" href="https://bibix.ailabstech.com/instagram" target="_blank" style="display:block;text-align:center;margin-top:8px;color:#3498db;font-size:12px;text-decoration:none;">Open scheduler in Bibix →</a>
+          </div>
+        </div>
+      </details>
+
+      <!-- ─── Sync ─── -->
+      <details class="section" data-section="sync">
+        <summary><span><span class="section-icon">📡</span>Sync</span></summary>
+        <div class="section-body">
+          <!-- Bibix connection — Production -->
+          <div class="card">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+              <span style="font-weight:bold;font-size:13px;">Production</span>
+              <span id="bibixDot" style="width:8px;height:8px;border-radius:50%;background:#ccc;display:inline-block;"></span>
+              <span id="bibixConnLabel" style="font-size:11px;color:#888;">Not connected</span>
+            </div>
+            <input type="password" id="bibixToken" placeholder="Paste your production API token" style="width:100%;padding:8px;border-radius:6px;border:1px solid #ccc;font-size:13px;margin-bottom:6px;" />
+            <button id="saveBibixConfig" style="background:#0073ea;margin-bottom:4px;">Connect to Production</button>
+            <p class="hint">Get your token: Bibix → Settings → Instagram Extension</p>
+          </div>
+
+          <!-- Bibix connection — Staging -->
+          <div class="card">
+            <div class="toggle-row" style="margin-bottom:8px;">
+              <div style="display:flex;align-items:center;gap:8px;">
+                <span style="font-weight:bold;font-size:13px;">🧪 Also sync to Staging</span>
+                <span id="bibixStagingDot" style="width:8px;height:8px;border-radius:50%;background:#ccc;display:inline-block;"></span>
+                <span id="bibixStagingLabel" style="font-size:11px;color:#888;">Off</span>
+              </div>
+              <label class="switch">
+                <input type="checkbox" id="stagingToggle" />
+                <span class="slider"></span>
+              </label>
+            </div>
+            <div id="stagingFields" style="display:none;">
+              <input type="password" id="bibixStagingToken" placeholder="Paste your staging API token" style="width:100%;padding:8px;border-radius:6px;border:1px solid #ccc;font-size:13px;margin-bottom:6px;" />
+              <button id="saveStagingConfig" style="background:#8a3ab9;margin-bottom:4px;">Connect to Staging</button>
+              <p class="hint">Get your staging token from staging.bibix.ailabstech.com → Settings</p>
+            </div>
+          </div>
+        </div>
+      </details>
+
+      <!-- ─── Pages ─── -->
+      <details class="section" data-section="pages">
+        <summary><span><span class="section-icon">🚀</span>Pages</span></summary>
+        <div class="section-body">
+          <div style="display:flex;gap:8px;">
+            <button id="historyBtn"   style="flex:1;background:#f0f0f0;color:#333;font-weight:normal;">📋 History</button>
+            <button id="dashboardBtn" style="flex:1;background:#8a3ab9;color:white;font-weight:normal;">📊 Dashboard</button>
+          </div>
+          <div style="margin-top:8px;">
+            <button id="campaignsBtn" style="width:100%;background:#e67e22;color:white;font-weight:normal;">🚀 Campaigns</button>
+          </div>
+        </div>
+      </details>
+    </div>
+
+    <div id="loader">
+      <div class="spinner"></div>
+      <div id="status">Running…</div>
+      <button id="stop" class="stop">STOP</button>
+    </div>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

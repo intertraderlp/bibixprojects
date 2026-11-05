@@ -1,0 +1,31 @@
+{
+  "manifest_version": 3,
+  "name": "Bibix TikTok Extension",
+  "version": "1.3.0",
+  "description": "Manual liking + replying on TikTok, synced to Bibix. Foundation for later automation.",
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": "icon.png"
+  },
+  "icons": {
+    "16": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": ["activeTab", "scripting", "storage", "tabs"],
+  "host_permissions": [
+    "https://www.tiktok.com/*",
+    "https://bibix.ailabstech.com/*",
+    "https://staging.bibix.ailabstech.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://www.tiktok.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

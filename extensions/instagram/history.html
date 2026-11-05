@@ -1,0 +1,363 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Bibix IG — History</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: Arial, sans-serif;
+      background: #f9f9f9;
+      color: #333;
+      min-width: 760px;
+      padding: 24px;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+
+    h2 { font-size: 20px; }
+
+    .badge {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 12px;
+      font-weight: bold;
+      color: white;
+    }
+    .badge-like    { background: #e63946; }
+    .badge-comment { background: #3897f0; }
+    .badge-follow  { background: #8a3ab9; }
+    .badge-unfollow{ background: #555; }
+
+    .actions {
+      display: flex;
+      gap: 10px;
+    }
+
+    button {
+      padding: 8px 16px;
+      font-size: 13px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    .btn-campaigns { background: #e67e22; color: white; }
+    .btn-dashboard { background: #8a3ab9; color: white; }
+    .btn-export    { background: #3897f0; color: white; }
+    .btn-clear     { background: #e63946; color: white; }
+    .btn-dashboard:hover, .btn-export:hover, .btn-clear:hover { opacity: 0.85; }
+
+    /* ── Filter panel ── */
+    .filter-panel {
+      background: white;
+      border-radius: 8px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+      padding: 14px 16px;
+      margin-bottom: 16px;
+    }
+
+    .filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: flex-end;
+      margin-bottom: 10px;
+    }
+    .filter-row:last-child { margin-bottom: 0; }
+
+    .filter-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .filter-group label {
+      font-size: 11px;
+      color: #888;
+      font-weight: bold;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+
+    .filter-group select,
+    .filter-group input {
+      padding: 7px 10px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 13px;
+      background: #fafafa;
+      height: 34px;
+    }
+
+    .filter-group input[type="date"] { width: 148px; }
+    .filter-group input[type="number"] { width: 110px; }
+    .filter-group input[type="text"] { width: 160px; }
+    .filter-group select { min-width: 140px; }
+
+    .filter-inline {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+    }
+    .filter-inline span { font-size: 12px; color: #aaa; }
+
+    .btn-reset {
+      background: #f0f0f0;
+      color: #555;
+      height: 34px;
+      padding: 0 14px;
+      font-size: 12px;
+      align-self: flex-end;
+    }
+    .btn-reset:hover { background: #e0e0e0; }
+
+    /* ── Table ── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: white;
+      border-radius: 8px;
+      overflow: hidden;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    }
+
+    th {
+      background: #f0f0f0;
+      text-align: left;
+      padding: 10px 14px;
+      font-size: 12px;
+      color: #666;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+
+    td {
+      padding: 10px 14px;
+      font-size: 13px;
+      border-top: 1px solid #f0f0f0;
+      vertical-align: top;
+    }
+
+    tr:hover td { background: #fafafa; }
+
+    .reply-text {
+      color: #555;
+      font-style: italic;
+      max-width: 220px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .empty {
+      text-align: center;
+      padding: 60px;
+      color: #aaa;
+      font-size: 15px;
+    }
+
+    /* ── Bottom bar ── */
+    .bottom-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 14px;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    #count {
+      font-size: 13px;
+      color: #888;
+    }
+
+    /* ── Pagination ── */
+    .pagination {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .pagination button {
+      padding: 6px 12px;
+      font-size: 13px;
+      background: #f0f0f0;
+      color: #333;
+      font-weight: normal;
+      border-radius: 5px;
+    }
+    .pagination button:hover { background: #ddd; }
+    .pagination button.active {
+      background: #3897f0;
+      color: white;
+      font-weight: bold;
+    }
+    .pagination button:disabled {
+      opacity: 0.35;
+      cursor: not-allowed;
+    }
+
+    .page-info {
+      font-size: 13px;
+      color: #888;
+    }
+
+    .per-page-group {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      color: #888;
+    }
+
+    .per-page-group select {
+      padding: 5px 8px;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      font-size: 13px;
+    }
+  </style>
+</head>
+<body>
+
+  <header>
+    <h2>📋 Action History</h2>
+    <div class="actions">
+      <button class="btn-campaigns" id="campaignsBtn">🚀 Campaigns</button>
+      <button class="btn-dashboard" id="dashboardBtn">📊 Dashboard</button>
+      <button class="btn-export" id="exportBtn">Export CSV</button>
+      <button class="btn-clear"  id="clearBtn">Clear All</button>
+    </div>
+  </header>
+
+  <!-- ── Filters ── -->
+  <div class="filter-panel">
+
+    <!-- Row 1: action, profile, target -->
+    <div class="filter-row">
+      <div class="filter-group">
+        <label>Action</label>
+        <select id="filterAction">
+          <option value="">All actions</option>
+          <optgroup label="Your actions">
+            <option value="like">❤️ Liked a comment</option>
+            <option value="comment_reply">💬 Replied to comment</option>
+            <option value="follow">👤 Followed someone</option>
+            <option value="unfollow">👋 Unfollowed someone</option>
+            <option value="dm_reply">✉️ DM Reply</option>
+          </optgroup>
+          <optgroup label="From notifications">
+            <option value="new_follower">➕ New Followers</option>
+            <option value="received_like_post">❤️ Got Like on post</option>
+            <option value="received_like_comment">❤️ Got Like on comment</option>
+            <option value="received_comment">💬 Got Comment</option>
+            <option value="received_reply">↩️ Got Reply</option>
+            <option value="received_mention">📣 Got Mentioned</option>
+          </optgroup>
+        </select>
+      </div>
+
+      <div class="filter-group">
+        <label>My Profile</label>
+        <select id="filterProfile">
+          <option value="">All profiles</option>
+        </select>
+      </div>
+
+      <div class="filter-group">
+        <label>Target Username</label>
+        <input type="text" id="filterUser" placeholder="Filter by username…" />
+      </div>
+
+      <div class="filter-group">
+        <label>Post Owner</label>
+        <select id="filterPostOwner">
+          <option value="">All post owners</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Row 2: date range + followers -->
+    <div class="filter-row">
+      <div class="filter-group">
+        <label>Date From</label>
+        <input type="date" id="filterDateFrom" />
+      </div>
+
+      <div class="filter-group">
+        <label>Date To</label>
+        <input type="date" id="filterDateTo" />
+      </div>
+
+      <div class="filter-group">
+        <label>Followers</label>
+        <div class="filter-inline">
+          <select id="filterFollowersOp">
+            <option value="">Any</option>
+            <option value="gt">Greater than</option>
+            <option value="gte">Greater or equal</option>
+            <option value="lt">Less than</option>
+            <option value="lte">Less or equal</option>
+            <option value="eq">Equal to</option>
+            <option value="between">Between</option>
+          </select>
+          <input type="number" id="filterFollowersVal" placeholder="e.g. 1000" min="0" />
+          <span id="filterFollowersBetweenLabel" style="display:none;">and</span>
+          <input type="number" id="filterFollowersVal2" placeholder="e.g. 5000" min="0" style="display:none;" />
+        </div>
+      </div>
+
+      <button class="btn-reset" id="resetBtn">✕ Reset Filters</button>
+    </div>
+  </div>
+
+  <!-- ── Table ── -->
+  <table>
+    <thead>
+      <tr>
+        <th>Date (of action)</th>
+        <th>My Profile</th>
+        <th>Action</th>
+        <th>Target User</th>
+        <th>Full Name</th>
+        <th>Followers</th>
+        <th>Reply</th>
+        <th>Post Owner</th>
+        <th>Post URL</th>
+      </tr>
+    </thead>
+    <tbody id="tableBody">
+      <tr><td colspan="9" class="empty">Loading…</td></tr>
+    </tbody>
+  </table>
+
+  <!-- ── Bottom bar ── -->
+  <div class="bottom-bar">
+    <div id="count"></div>
+
+    <div class="pagination" id="pagination"></div>
+
+    <div class="per-page-group">
+      Rows per page:
+      <select id="perPageSelect">
+        <option value="25">25</option>
+        <option value="50" selected>50</option>
+        <option value="100">100</option>
+        <option value="200">200</option>
+        <option value="500">500</option>
+      </select>
+    </div>
+  </div>
+
+  <script src="history.js"></script>
+</body>
+</html>

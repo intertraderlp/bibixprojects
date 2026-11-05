@@ -1,0 +1,383 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Bibix IG — Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: Arial, sans-serif;
+      background: #f3f4f6;
+      color: #333;
+      min-width: 900px;
+      padding: 24px;
+    }
+
+    /* ── Header ── */
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 22px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .header-left { display: flex; align-items: center; gap: 14px; }
+
+    h2 { font-size: 20px; }
+
+    .btn-back {
+      padding: 7px 14px;
+      font-size: 13px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      background: #e8e8e8;
+      color: #444;
+      font-weight: bold;
+    }
+    .btn-back:hover { background: #d8d8d8; }
+
+    /* ── Period selector ── */
+    .period-selector {
+      display: flex;
+      gap: 6px;
+    }
+
+    .period-btn {
+      padding: 7px 16px;
+      font-size: 13px;
+      border: 1px solid #ddd;
+      border-radius: 20px;
+      cursor: pointer;
+      background: white;
+      color: #555;
+      font-weight: normal;
+    }
+    .period-btn:hover  { background: #f0f0f0; }
+    .period-btn.active { background: #3897f0; color: white; border-color: #3897f0; font-weight: bold; }
+
+    /* ── Summary cards ── */
+    .cards {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 14px;
+      margin-bottom: 22px;
+    }
+
+    .card {
+      background: white;
+      border-radius: 10px;
+      padding: 18px 20px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+    }
+
+    .card-value {
+      font-size: 32px;
+      font-weight: bold;
+      line-height: 1.1;
+      margin-bottom: 4px;
+    }
+
+    .card-label {
+      font-size: 13px;
+      font-weight: bold;
+      color: #444;
+      margin-bottom: 3px;
+    }
+
+    .card-sub { font-size: 11px; color: #aaa; }
+
+    .card.blue   .card-value { color: #3897f0; }
+    .card.green  .card-value { color: #27ae60; }
+    .card.purple .card-value { color: #8a3ab9; }
+    .card.pink   .card-value { color: #e91e63; }
+
+    /* ── Sections ── */
+    .section {
+      background: white;
+      border-radius: 10px;
+      padding: 20px 22px;
+      box-shadow: 0 1px 4px rgba(0,0,0,0.07);
+      margin-bottom: 18px;
+    }
+
+    .section h3 {
+      font-size: 15px;
+      margin-bottom: 14px;
+      color: #222;
+    }
+
+    .section-sub {
+      font-size: 12px;
+      color: #888;
+      margin-bottom: 12px;
+    }
+
+    /* ── Two-column layout ── */
+    .two-col {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 18px;
+    }
+
+    .col-box h4 {
+      font-size: 13px;
+      color: #555;
+      margin-bottom: 10px;
+      font-weight: bold;
+    }
+
+    .hint-text {
+      font-size: 11px;
+      color: #aaa;
+      font-weight: normal;
+    }
+
+    /* ── Tables ── */
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    th {
+      background: #f8f8f8;
+      text-align: left;
+      padding: 8px 12px;
+      font-size: 11px;
+      color: #888;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      border-bottom: 1px solid #eee;
+    }
+
+    td {
+      padding: 8px 12px;
+      border-bottom: 1px solid #f5f5f5;
+      vertical-align: middle;
+    }
+
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: #fafafa; }
+
+    a { color: #3897f0; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+
+    /* ── Empty / note ── */
+    .empty {
+      text-align: center;
+      padding: 30px;
+      color: #bbb;
+      font-size: 14px;
+    }
+
+    .empty-chart {
+      text-align: center;
+      padding: 20px;
+      color: #ccc;
+      font-size: 12px;
+    }
+
+    .table-note {
+      font-size: 11px;
+      color: #bbb;
+      text-align: right;
+      margin-top: 8px;
+    }
+
+    /* ── Breakdown pills ── */
+    .breakdown {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .breakdown-item {
+      font-size: 12px;
+      color: #666;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      display: inline-block;
+      flex-shrink: 0;
+    }
+
+    /* ── Rate bar ── */
+    .rate-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .rate-track {
+      width: 80px;
+      height: 7px;
+      background: #eee;
+      border-radius: 4px;
+      overflow: hidden;
+    }
+
+    .rate-fill {
+      height: 100%;
+      border-radius: 4px;
+      transition: width 0.3s;
+    }
+
+    /* ── Time bars ── */
+    .time-bars {
+      display: flex;
+      align-items: flex-end;
+      gap: 4px;
+      padding-bottom: 4px;
+    }
+
+    .time-col {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      flex: 1;
+    }
+
+    .time-col-hour { flex: 0 0 auto; min-width: 22px; }
+
+    .time-bar-wrap {
+      height: 90px;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      align-items: center;
+      width: 100%;
+      position: relative;
+    }
+
+    .time-bar {
+      width: 80%;
+      min-height: 2px;
+      border-radius: 3px 3px 0 0;
+    }
+
+    .time-conv {
+      position: absolute;
+      top: -16px;
+      font-size: 9px;
+      color: #27ae60;
+      font-weight: bold;
+      white-space: nowrap;
+    }
+
+    .time-label { font-size: 10px; color: #aaa; margin-top: 4px; }
+    .time-val   { font-size: 10px; color: #888; font-weight: bold; }
+
+    /* ── Conversion badge ── */
+    .conv-badge {
+      display: inline-block;
+      background: #e8f8ed;
+      color: #27ae60;
+      border-radius: 10px;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-weight: bold;
+    }
+
+    /* ── Loading ── */
+    #loading {
+      text-align: center;
+      padding: 80px;
+      color: #aaa;
+      font-size: 16px;
+    }
+
+    .spinner {
+      width: 32px; height: 32px;
+      border: 4px solid #ddd;
+      border-top-color: #3897f0;
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+      margin: 0 auto 12px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    #main { display: none; }
+  </style>
+</head>
+<body>
+
+  <header>
+    <div class="header-left">
+      <button class="btn-back" id="backBtn">← History</button>
+      <h2>📊 Analytics Dashboard</h2>
+    </div>
+    <div class="period-selector">
+      <button class="period-btn" data-days="7">7 days</button>
+      <button class="period-btn active" data-days="30">30 days</button>
+      <button class="period-btn" data-days="90">90 days</button>
+      <button class="period-btn" data-days="0">All time</button>
+    </div>
+  </header>
+
+  <div id="loading">
+    <div class="spinner"></div>
+    Loading data…
+  </div>
+
+  <div id="main">
+
+    <!-- Summary cards -->
+    <div class="cards" id="summaryCards"></div>
+
+    <!-- Activity over time -->
+    <div class="section">
+      <h3>📅 Activity Over Time</h3>
+      <div class="two-col">
+        <div class="col-box">
+          <h4>Your Outbound Actions <span class="hint-text">(likes · replies · follows)</span></h4>
+          <div id="chartOutbound"></div>
+        </div>
+        <div class="col-box">
+          <h4>Incoming Engagement <span class="hint-text">(followers · likes · comments)</span></h4>
+          <div id="chartInbound"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Who followed back -->
+    <div class="section">
+      <h3>🔄 Who Followed You Back</h3>
+      <p class="section-sub" id="conversionSub"></p>
+      <div id="conversionTable"></div>
+    </div>
+
+    <!-- Best posts -->
+    <div class="section">
+      <h3>🏆 Best Posts by Follower Conversion</h3>
+      <p class="section-sub">Posts whose comment sections you engaged with — ranked by how many of those users later followed you.</p>
+      <div id="bestPosts"></div>
+    </div>
+
+    <!-- Best times -->
+    <div class="section">
+      <h3>⏰ Best Time to Engage</h3>
+      <div class="two-col" id="bestTimes"></div>
+    </div>
+
+    <!-- Top users -->
+    <div class="section">
+      <h3>👥 Top Users</h3>
+      <div class="two-col" id="topUsers"></div>
+    </div>
+
+  </div>
+
+  <script src="dashboard.js"></script>
+</body>
+</html>
