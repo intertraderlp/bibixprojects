@@ -9,7 +9,7 @@ import {
   horizontalListSortingStrategy, useSortable, arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Plus, ChevronDown, ChevronRight, MoreHorizontal, Trash2, GripVertical, Settings, ChevronUp, Filter, X, ArrowUpAZ, ArrowDownAZ, ArrowUp, ArrowDown, Sigma, Zap, Sparkles, ExternalLink } from 'lucide-react';
+import { Plus, ChevronDown, ChevronRight, MoreHorizontal, Trash2, GripVertical, Settings, ChevronUp, Filter, X, ArrowUpAZ, ArrowDownAZ, ArrowUp, ArrowDown, Sigma, Zap, Sparkles, ExternalLink, Copy, CornerUpRight, Pencil } from 'lucide-react';
 import { totalSecondsFromRaw, formatHMS } from '../../lib/timeTracking';
 import { useBoardStore } from '../../store/boardStore';
 import api from '../../api/client';
@@ -18,6 +18,7 @@ import CellRenderer from '../columns/CellRenderer';
 import ItemModal from './ItemModal';
 import AddColumnModal from './AddColumnModal';
 import ColumnSettingsModal from './ColumnSettingsModal';
+import TransferItemsModal from './TransferItemsModal';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
 import toast from 'react-hot-toast';
 
@@ -155,7 +156,7 @@ function OptionFilterDropdown({ opts, value, onChange }: {
 
 // ─── Sortable wrappers ───────────────────────────────────────────────────────
 
-function SortableColumnHeader({ col, width, sortDir, onResize, onSettings, onDelete, onSort, onFilterOpen, onSummarize }: {
+function SortableColumnHeader({ col, width, sortDir, onResize, onSettings, onDelete, onSort, onFilterOpen, onSummarize, onRename }: {
   col: Column; width: number; sortDir?: 'asc' | 'desc' | null;
   onResize: (colId: string, e: React.PointerEvent) => void;
   onSettings: (col: Column) => void;
@@ -163,17 +164,30 @@ function SortableColumnHeader({ col, width, sortDir, onResize, onSettings, onDel
   onSort: (colId: string, dir: 'asc' | 'desc') => void;
   onFilterOpen: (colId: string) => void;
   onSummarize: (col: Column, s: SummaryType | null) => void;
+  onRename: (colId: string, name: string) => void;
 }) {
   const curSummary = (col.settings as { summary?: SummaryType })?.summary;
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: col.id, data: { type: 'column' } });
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(col.name);
+  const commit = () => { setEditing(false); const n = draft.trim(); if (n && n !== col.name) onRename(col.id, n); };
   return (
     <div ref={setNodeRef} style={{ width, minWidth: width, transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }}
       className="relative flex items-center justify-center border-r border-gray-200 bg-white text-xs font-medium text-gray-500 select-none group h-9 flex-shrink-0">
       <span {...attributes} {...listeners} className="absolute left-1 cursor-grab text-gray-300 hover:text-gray-500">
         <GripVertical size={12} />
       </span>
-      <span className="truncate px-4 flex items-center gap-1">
-        {col.name}
+      <span className="truncate px-4 flex items-center gap-1 max-w-full">
+        {editing ? (
+          <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { setEditing(false); setDraft(col.name); } }}
+            onPointerDown={e => e.stopPropagation()}
+            className="text-xs font-medium text-gray-700 outline-none border-b border-monday-blue bg-transparent w-24 min-w-0 text-center" />
+        ) : (
+          <span className="cursor-pointer hover:text-monday-blue truncate" title="Double-click to rename"
+            onDoubleClick={() => { setDraft(col.name); setEditing(true); }}>{col.name}</span>
+        )}
         {sortDir === 'asc' && <ArrowUp size={10} className="text-monday-blue flex-shrink-0" />}
         {sortDir === 'desc' && <ArrowDown size={10} className="text-monday-blue flex-shrink-0" />}
       </span>
@@ -195,6 +209,7 @@ function SortableColumnHeader({ col, width, sortDir, onResize, onSettings, onDel
         ))}
         {curSummary && <DropdownItem onClick={() => onSummarize(col, null)}><X size={13} /> Clear summary</DropdownItem>}
         <div className="border-t border-gray-100 my-1" />
+        <DropdownItem onClick={() => { setDraft(col.name); setEditing(true); }}><Pencil size={13} /> Rename</DropdownItem>
         <DropdownItem onClick={() => onSettings(col)}><Settings size={13} /> Edit Column</DropdownItem>
         <DropdownItem danger onClick={() => onDelete(col)}><Trash2 size={13} /> Delete</DropdownItem>
       </Dropdown>
@@ -262,9 +277,9 @@ function SortableGroupHeader({ group, itemCount, collapsed, filterActive, onTogg
   );
 }
 
-function SortableItemRow({ item, group, columns, board, colWidths, onOpen, onDelete, onValueChange, isSubtask, subtaskCount, expanded, onToggleExpand, onAddSubtask, onPromote, onDemote, demoteTargets, hasSubtasks, templates, onRunTemplate, selected, onToggleSelect }: {
+function SortableItemRow({ item, group, columns, board, colWidths, nameWidth, onOpen, onDelete, onValueChange, isSubtask, subtaskCount, expanded, onToggleExpand, onAddSubtask, onPromote, onDemote, demoteTargets, hasSubtasks, templates, onRunTemplate, selected, onToggleSelect }: {
   item: Item; group: Group; columns: Column[];
-  board: { workspace_id: string }; colWidths: Record<string, number>;
+  board: { workspace_id: string }; colWidths: Record<string, number>; nameWidth: number;
   onOpen: () => void; onDelete: () => void;
   onValueChange: (colId: string, val: string | null) => void;
   isSubtask?: boolean; subtaskCount?: number;
@@ -283,7 +298,7 @@ function SortableItemRow({ item, group, columns, board, colWidths, onOpen, onDel
     <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.35 : 1 }}
       className={`flex border-b border-gray-100 hover:bg-gray-50 group ${selected ? 'bg-blue-50/60' : isSubtask ? 'bg-gray-50/50' : 'bg-white'}`}>
       {/* Grip + Name col (sticky) */}
-      <div className={`sticky left-0 z-10 flex items-center gap-1 border-r border-gray-200 h-9 flex-shrink-0 ${selected ? 'bg-blue-50/60' : isSubtask ? 'bg-gray-50' : 'bg-white'} group-hover:bg-gray-50`} style={{ width: NAME_COL_WIDTH }}>
+      <div className={`sticky left-0 z-10 flex items-center gap-1 border-r border-gray-200 h-9 flex-shrink-0 ${selected ? 'bg-blue-50/60' : isSubtask ? 'bg-gray-50' : 'bg-white'} group-hover:bg-gray-50`} style={{ width: nameWidth }}>
         <span {...attributes} {...listeners} className="cursor-grab text-gray-200 hover:text-gray-400 pl-2 flex-shrink-0"><GripVertical size={13} /></span>
         <input type="checkbox" checked={!!selected} onClick={e => onToggleSelect?.(e)} onChange={() => {}}
           className={`flex-shrink-0 w-3.5 h-3.5 cursor-pointer accent-monday-blue ${selected ? '' : 'opacity-0 group-hover:opacity-100'}`} />
@@ -379,7 +394,7 @@ function SortableItemRow({ item, group, columns, board, colWidths, onOpen, onDel
 
 export default function TableView() {
   const store = useBoardStore();
-  const { board, addItem, deleteItem, updateItem, addGroup, updateGroup, deleteGroup, updateItemValue, updateColumn, deleteColumn, reorderGroups, reorderItems, reorderColumns, getValue, templates, loadTemplates, runTemplate } = store;
+  const { board, addItem, deleteItem, updateItem, addGroup, updateGroup, deleteGroup, updateItemValue, updateColumn, deleteColumn, reorderGroups, reorderItems, reorderColumns, getValue, templates, loadTemplates, runTemplate, updateBoard, refreshBoard } = store;
 
   useEffect(() => { if (board) loadTemplates(board.id); }, [board?.id]);
 
@@ -410,6 +425,7 @@ export default function TableView() {
   });
   const [openColId, setOpenColId] = useState('');
   const [blockedLinks, setBlockedLinks] = useState<string[]>([]);
+  const [transferMode, setTransferMode] = useState<'copy' | 'move' | null>(null);
   const clearSelection = () => { setSelected(new Set()); setBulkColId(''); setBulkValue(''); setOpenColId(''); };
 
   const bulkCol = board?.columns.find(c => c.id === bulkColId) || null;
@@ -505,6 +521,11 @@ export default function TableView() {
   const [newSubtaskFor, setNewSubtaskFor] = useState<string | null>(null);
   const [newSubtaskName, setNewSubtaskName] = useState('');
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
+  // First ("Item") column — resizable + renamable, persisted on the board.
+  const [nameColW, setNameColW] = useState(NAME_COL_WIDTH);
+  const nameColWRef = useRef(NAME_COL_WIDTH);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
   const [showFilters, setShowFilters] = useState<Record<string, boolean>>({});
   const [groupFilters, setGroupFilters] = useState<Record<string, { name: string; cols: Record<string, string> }>>({});
   const [sortConfig, setSortConfig] = useState<{ colId: string; dir: 'asc' | 'desc' } | null>(null);
@@ -527,10 +548,42 @@ export default function TableView() {
     const w: Record<string, number> = {};
     board.columns.forEach(c => { w[c.id] = c.width || DEFAULT_COL_WIDTH; });
     setColWidths(w);
+    setNameColW(board.name_col_width || NAME_COL_WIDTH);
   }, [board?.id]);
 
   // Keep the ref in sync with state so resize closures can read it
   useEffect(() => { colWidthsRef.current = colWidths; }, [colWidths]);
+  useEffect(() => { nameColWRef.current = nameColW; }, [nameColW]);
+
+  // Resize the first ("Item") column; persist the new width on the board.
+  const startResizeName = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    const startX = e.clientX;
+    const startW = nameColWRef.current;
+    let cur = startW;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    const onMove = (ev: PointerEvent) => { cur = Math.max(180, startW + ev.clientX - startX); setNameColW(cur); };
+    const onUp = () => {
+      const bid = useBoardStore.getState().board?.id;
+      if (bid) api.put(`/boards/${bid}`, { name_col_width: Math.round(cur) }).catch(() => {});
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+    };
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+  }, []);
+
+  const saveNameLabel = () => {
+    setEditingName(false);
+    const n = nameDraft.trim() || 'Item';
+    const current = board?.name_col_label || 'Item';
+    if (n !== current) updateBoard({ name_col_label: n }).catch(() => {});
+  };
 
   const startResize = useCallback((colId: string, e: React.PointerEvent) => {
     e.preventDefault();
@@ -738,7 +791,8 @@ export default function TableView() {
   };
 
   // ─── Render ──────────────────────────────────────────────────────────────────
-  const totalWidth = NAME_COL_WIDTH + sortedColumns.reduce((s, c) => s + (colWidths[c.id] || DEFAULT_COL_WIDTH), 0) + 60;
+  const totalWidth = nameColW + sortedColumns.reduce((s, c) => s + (colWidths[c.id] || DEFAULT_COL_WIDTH), 0) + 60;
+  const nameLabel = board.name_col_label || 'Item';
 
   return (
     <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd}>
@@ -777,8 +831,18 @@ export default function TableView() {
                     <>
                       {/* Column header row */}
                       <div className="flex border-b border-gray-200 bg-white">
-                        <div className="sticky left-0 z-10 bg-white border-r border-gray-200 flex items-center px-4 h-9 flex-shrink-0 text-xs font-medium text-gray-500" style={{ width: NAME_COL_WIDTH }}>
-                          Item
+                        <div className="sticky left-0 z-10 bg-white border-r border-gray-200 flex items-center px-4 h-9 flex-shrink-0 text-xs font-medium text-gray-500 relative" style={{ width: nameColW }}>
+                          {editingName ? (
+                            <input autoFocus value={nameDraft} onChange={e => setNameDraft(e.target.value)}
+                              onBlur={saveNameLabel}
+                              onKeyDown={e => { if (e.key === 'Enter') saveNameLabel(); if (e.key === 'Escape') setEditingName(false); }}
+                              className="text-xs font-medium text-gray-700 outline-none border-b border-monday-blue bg-transparent w-full" />
+                          ) : (
+                            <span className="cursor-pointer hover:text-monday-blue truncate" title="Double-click to rename"
+                              onDoubleClick={() => { setNameDraft(nameLabel); setEditingName(true); }}>{nameLabel}</span>
+                          )}
+                          <div onPointerDown={startResizeName}
+                            className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-monday-blue/40 transition-colors" />
                         </div>
                         <SortableContext items={sortedColumns.map(c => c.id)} strategy={horizontalListSortingStrategy}>
                           {sortedColumns.map(col => (
@@ -791,6 +855,7 @@ export default function TableView() {
                               onSort={handleSort}
                               onFilterOpen={handleFilterOpen}
                               onSummarize={handleSummarize}
+                              onRename={(id, n) => updateColumn(id, { name: n })}
                             />
                           ))}
                         </SortableContext>
@@ -802,7 +867,7 @@ export default function TableView() {
                       {/* Filter row */}
                       {showFilters[group.id] && (
                         <div className="flex border-b border-blue-200 bg-blue-50/40">
-                          <div className="sticky left-0 z-10 bg-blue-50/60 border-r border-blue-200 flex items-center gap-2 px-3 h-9 flex-shrink-0" style={{ width: NAME_COL_WIDTH }}>
+                          <div className="sticky left-0 z-10 bg-blue-50/60 border-r border-blue-200 flex items-center gap-2 px-3 h-9 flex-shrink-0" style={{ width: nameColW }}>
                             <Filter size={12} className="text-monday-blue flex-shrink-0" />
                             <input
                               value={groupFilters[group.id]?.name ?? ''}
@@ -856,7 +921,7 @@ export default function TableView() {
                             <div key={item.id}>
                               <SortableItemRow
                                 item={item} group={group} columns={sortedColumns} board={board}
-                                colWidths={colWidths}
+                                colWidths={colWidths} nameWidth={nameColW}
                                 onOpen={() => setSelectedItem(item)}
                                 onDelete={() => deleteItem(item.id)}
                                 onValueChange={(colId, val) => updateItemValue(item.id, colId, val)}
@@ -892,7 +957,7 @@ export default function TableView() {
                                   <SortableContext items={subs.map(s => s.id)} strategy={verticalListSortingStrategy}>
                                     {subs.map(sub => (
                                       <SortableItemRow key={sub.id} item={sub} group={group} columns={sortedColumns}
-                                        board={board} colWidths={colWidths} isSubtask
+                                        board={board} colWidths={colWidths} nameWidth={nameColW} isSubtask
                                         onOpen={() => setSelectedItem(sub)}
                                         onDelete={() => deleteItem(sub.id)}
                                         onValueChange={(colId, val) => updateItemValue(sub.id, colId, val)}
@@ -978,7 +1043,7 @@ export default function TableView() {
                       {/* Summary footer — per-column totals over the whole group */}
                       {sortedColumns.some(c => (c.settings as { summary?: SummaryType })?.summary) && (
                         <div className="flex border-t-2 border-gray-200 bg-gray-50/80 text-xs">
-                          <div className="sticky left-0 z-10 flex items-center border-r border-gray-200 h-8 flex-shrink-0 bg-gray-50 font-medium text-gray-500 px-4" style={{ width: NAME_COL_WIDTH }}>
+                          <div className="sticky left-0 z-10 flex items-center border-r border-gray-200 h-8 flex-shrink-0 bg-gray-50 font-medium text-gray-500 px-4" style={{ width: nameColW }}>
                             Summary
                           </div>
                           {sortedColumns.map(col => {
@@ -1017,7 +1082,7 @@ export default function TableView() {
       {/* Drag overlay */}
       <DragOverlay>
         {activeId && activeDragType === 'item' && activeItem && (
-          <div className="flex items-center bg-white shadow-xl rounded border border-monday-blue/30 h-9 px-4 opacity-90" style={{ width: NAME_COL_WIDTH }}>
+          <div className="flex items-center bg-white shadow-xl rounded border border-monday-blue/30 h-9 px-4 opacity-90" style={{ width: nameColW }}>
             <GripVertical size={13} className="text-gray-400 mr-2" />
             <span className="text-sm text-gray-800 truncate">{(activeItem as Item).name}</span>
           </div>
@@ -1039,6 +1104,15 @@ export default function TableView() {
       {selectedItem && <ItemModal item={selectedItem} onClose={() => setSelectedItem(null)} />}
       {showAddCol && <AddColumnModal onClose={() => setShowAddCol(false)} />}
       {settingsCol && <ColumnSettingsModal column={settingsCol} onClose={() => setSettingsCol(null)} />}
+      {transferMode && board && (
+        <TransferItemsModal
+          itemIds={[...selected]}
+          currentBoardId={board.id}
+          defaultMode={transferMode}
+          onClose={() => setTransferMode(null)}
+          onDone={async () => { setTransferMode(null); clearSelection(); await refreshBoard(board.id); }}
+        />
+      )}
 
       {/* ── Bulk action bar ──────────────────────────────────────────────── */}
       {selected.size > 0 && (
@@ -1096,6 +1170,16 @@ export default function TableView() {
               </button>
             </>
           )}
+
+          <div className="h-5 w-px bg-gray-200" />
+          <button onClick={() => setTransferMode('copy')}
+            className="flex items-center gap-1 text-sm text-gray-700 hover:bg-gray-100 px-2.5 py-1.5 rounded-lg">
+            <Copy size={14} /> Copy to
+          </button>
+          <button onClick={() => setTransferMode('move')}
+            className="flex items-center gap-1 text-sm text-gray-700 hover:bg-gray-100 px-2.5 py-1.5 rounded-lg">
+            <CornerUpRight size={14} /> Move to
+          </button>
 
           <div className="h-5 w-px bg-gray-200" />
           <button onClick={bulkDelete} disabled={bulkBusy}

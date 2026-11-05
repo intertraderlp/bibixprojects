@@ -89,6 +89,11 @@ const migrations = [
   "ALTER TABLE items ADD COLUMN updated_by TEXT",
   "ALTER TABLE board_columns ADD COLUMN width INTEGER NOT NULL DEFAULT 140",
   "ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '{}'",
+  // Resizable / renamable first ("Item") column — stored per board
+  "ALTER TABLE boards ADD COLUMN name_col_width INTEGER NOT NULL DEFAULT 300",
+  "ALTER TABLE boards ADD COLUMN name_col_label TEXT",
+  // Simple key/value store (used by the extensions download guide, etc.)
+  "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)",
   // super_admin role: no schema change needed — role column already TEXT
   // This migration is a no-op placeholder to document the new valid value
 ];

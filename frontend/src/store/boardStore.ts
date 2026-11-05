@@ -42,7 +42,7 @@ interface BoardState {
   addColumn: (name: string, type: ColumnType, settings?: Record<string, unknown>) => Promise<void>;
   updateColumn: (columnId: string, data: Partial<Column>) => Promise<void>;
   deleteColumn: (columnId: string) => Promise<void>;
-  updateBoard: (data: { name?: string; description?: string; icon?: string }) => Promise<void>;
+  updateBoard: (data: { name?: string; description?: string; icon?: string; name_col_width?: number; name_col_label?: string }) => Promise<void>;
   getItemValues: (itemId: string) => ItemValue[];
   getValue: (itemId: string, columnId: string) => string | null;
   templates: MessageTemplate[];

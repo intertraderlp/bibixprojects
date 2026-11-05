@@ -24,6 +24,7 @@ const MODULES: { id: AppModule; label: string; description: string; emoji: strin
   { id: 'crm',        label: 'CRM',                  description: 'Contacts, forms and reports',     emoji: '👥' },
   { id: 'invoices',   label: 'Invoices',             description: 'Create and manage invoices',      emoji: '🧾' },
   { id: 'marketing',  label: 'Marketing',            description: 'Social media and campaigns',      emoji: '📣' },
+  { id: 'extensions', label: 'Extensions Download',   description: 'Download & install browser extensions', emoji: '🧩' },
 ];
 
 // Sub-modules nested under "marketing" → toggleable when marketing is on.

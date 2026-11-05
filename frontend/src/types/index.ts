@@ -1,6 +1,6 @@
 export type UserRole = 'super_admin' | 'admin' | 'user' | 'readonly';
 
-export type AppModule = 'boards' | 'calendar' | 'bibixbot' | 'scheduling' | 'crm' | 'instagram' | 'linkedin' | 'marketing' | 'invoices';
+export type AppModule = 'boards' | 'calendar' | 'bibixbot' | 'scheduling' | 'crm' | 'instagram' | 'linkedin' | 'marketing' | 'invoices' | 'extensions';
 
 export interface User {
   id: string;
@@ -30,6 +30,8 @@ export interface Board {
   created_at: string;
   workspace_name?: string; // populated for boards shared directly (not via workspace)
   access?: string;
+  name_col_width?: number;
+  name_col_label?: string | null;
 }
 
 export interface UserGroup {

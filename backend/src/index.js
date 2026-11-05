@@ -63,6 +63,7 @@ app.use('/api/events',      require('./routes/events'));
 app.use('/api/scheduling',  require('./routes/scheduling'));
 app.use('/api/crm',         require('./routes/crm'));
 app.use('/api/invoices',    require('./routes/invoices'));
+app.use('/api/extensions',  require('./routes/extensions'));
 const instagramRouter = require('./routes/instagram');
 app.use('/api/instagram',      instagramRouter);
 app.use('/api/linkedin',       require('./routes/linkedin'));

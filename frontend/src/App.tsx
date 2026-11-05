@@ -21,6 +21,7 @@ import PublicFormPage from './pages/PublicFormPage';
 import InstagramPage from './pages/InstagramPage';
 import LinkedInPage from './pages/LinkedInPage';
 import BackupsPage from './pages/BackupsPage';
+import ExtensionsPage from './pages/ExtensionsPage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuthStore();
@@ -67,6 +68,7 @@ export default function App() {
         <Route path="marketing/instagram" element={<ModuleRoute module="instagram"><InstagramPage /></ModuleRoute>} />
         <Route path="marketing/linkedin"  element={<ModuleRoute module="linkedin"><LinkedInPage /></ModuleRoute>} />
         <Route path="backups" element={<BackupsPage />} />
+        <Route path="extensions" element={<ModuleRoute module="extensions"><ExtensionsPage /></ModuleRoute>} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="admin" element={<AdminPage />} />
       </Route>
