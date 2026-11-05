@@ -32,6 +32,13 @@ const MARKETING_CHILDREN: { key: string; label: string; description: string; emo
   { key: 'marketing.instagram', label: 'Instagram', description: 'Access the Instagram tools',  emoji: '📷' },
   { key: 'marketing.linkedin',  label: 'LinkedIn',  description: 'Access the LinkedIn tools',   emoji: '💼' },
 ];
+// Per-extension visibility nested under "extensions" → which downloads a user sees.
+const EXTENSION_CHILDREN: { key: string; label: string; description: string; emoji: string }[] = [
+  { key: 'extensions.linkedin',  label: 'LinkedIn',  description: 'LinkedIn Assistant extension',  emoji: '💼' },
+  { key: 'extensions.instagram', label: 'Instagram', description: 'Instagram Assistant extension', emoji: '📷' },
+  { key: 'extensions.tiktok',    label: 'TikTok',    description: 'TikTok Assistant extension',    emoji: '🎵' },
+  { key: 'extensions.idealista', label: 'Idealista', description: 'Idealista Scraper extension',   emoji: '🏠' },
+];
 // Tabs nested under "marketing.instagram" → visible in the Chrome extension popup.
 const INSTAGRAM_EXT_TABS: { key: string; label: string; description: string }[] = [
   { key: 'marketing.instagram.engagement', label: 'Engagement',  description: 'Like, reply, follow, unfollow' },
@@ -227,6 +234,41 @@ function PermissionsPanel({ user, canEdit, onClose, onSaved }: {
                                 </p>
                               </div>
                             )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Extensions → per-extension visibility */}
+                  {mod.id === 'extensions' && (isElevated || on) && (
+                    <div className="ml-6 mt-2 pl-3 border-l-2 border-gray-100 space-y-2">
+                      <p className="text-[11px] uppercase tracking-wider text-gray-400 mb-1">Which extensions this user can see</p>
+                      {EXTENSION_CHILDREN.map(child => {
+                        const childOn = getKey(child.key);
+                        const childDisabled = isElevated || !canEdit;
+                        return (
+                          <div key={child.key}
+                            className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
+                              childDisabled
+                                ? 'border-gray-100 bg-gray-50 opacity-60 cursor-not-allowed'
+                                : childOn
+                                  ? 'border-blue-200 bg-blue-50/50 cursor-pointer hover:bg-blue-50'
+                                  : 'border-gray-200 bg-white cursor-pointer hover:bg-gray-50'
+                            }`}
+                            onClick={() => !childDisabled && toggleKey(child.key)}
+                          >
+                            <span className="text-lg flex-shrink-0">{child.emoji}</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm font-medium text-gray-800">{child.label}</div>
+                              <div className="text-xs text-gray-400 mt-0.5">{child.description}</div>
+                            </div>
+                            <div className="flex-shrink-0">
+                              {isElevated || childOn
+                                ? <ToggleRight size={20} className="text-blue-500" />
+                                : <ToggleLeft  size={20} className="text-gray-300" />
+                              }
+                            </div>
                           </div>
                         );
                       })}

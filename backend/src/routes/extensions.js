@@ -34,6 +34,20 @@ function describe(cfg) {
   return { key: cfg.key, name: cfg.name, blurb: cfg.blurb, available, version, description };
 }
 
+// Per-extension visibility: admins see all; otherwise the `extensions.<key>`
+// flag must not be explicitly false (absent = visible, backward-compatible).
+function userPerms(userId) {
+  const u = db.prepare('SELECT role, permissions FROM users WHERE id = ?').get(userId);
+  let perms = {};
+  try { perms = JSON.parse(u?.permissions || '{}'); } catch { /* malformed */ }
+  return { role: u?.role, perms };
+}
+function canSeeExtension(role, perms, key) {
+  if (role === 'admin' || role === 'super_admin') return true;
+  if (perms.extensions === false) return false;
+  return perms[`extensions.${key}`] !== false;
+}
+
 // ── Install guide (admin-editable, so a video/notes can be added later) ──────
 function getGuide() {
   try {
@@ -47,9 +61,11 @@ function setGuide(guide) {
   db.prepare("INSERT INTO app_settings (key, value) VALUES ('extensions_guide', ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value").run(value);
 }
 
-// List extensions + current install guide.
+// List extensions the user is allowed to see + current install guide.
 router.get('/', authenticate, requirePermission('extensions'), (req, res) => {
-  res.json({ extensions: EXTENSIONS.map(describe), guide: getGuide() });
+  const { role, perms } = userPerms(req.user.id);
+  const list = EXTENSIONS.filter(e => canSeeExtension(role, perms, e.key)).map(describe);
+  res.json({ extensions: list, guide: getGuide() });
 });
 
 // Admin: update the shared install guide (video URL + intro notes).
@@ -63,6 +79,8 @@ router.put('/guide', authenticate, requireAdmin, (req, res) => {
 router.get('/:key/download', authenticate, requirePermission('extensions'), (req, res) => {
   const cfg = EXTENSIONS.find(e => e.key === req.params.key);
   if (!cfg) return res.status(404).json({ error: 'Unknown extension' });
+  const { role, perms } = userPerms(req.user.id);
+  if (!canSeeExtension(role, perms, cfg.key)) return res.status(403).json({ error: 'Not allowed' });
   const dir = extDir(cfg);
   let version = '';
   try { version = JSON.parse(fs.readFileSync(path.join(dir, 'manifest.json'), 'utf8')).version || ''; }
