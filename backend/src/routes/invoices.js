@@ -3,6 +3,7 @@ const { v4: uuidv4 } = require('uuid');
 // pdfkit removed — PDF export is handled client-side via browser print
 const db = require('../db/database');
 const { authenticate } = require('../middleware/auth');
+const { accessFor, sharedAccessMap, listShares, shareTargets } = require('../utils/sharing');
 
 const router = express.Router();
 
@@ -70,6 +71,17 @@ db.exec(`
     position INTEGER DEFAULT 0,
     FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS invoice_shares (
+    id TEXT PRIMARY KEY,
+    invoice_id TEXT NOT NULL,
+    subject_type TEXT NOT NULL,   -- 'user' | 'group'
+    subject_id TEXT NOT NULL,
+    access TEXT NOT NULL DEFAULT 'view',  -- 'view' | 'edit'
+    created_by TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(invoice_id, subject_type, subject_id)
+  );
 `);
 
 // ── Migration: add template_id column if it doesn't exist ────────────────────
@@ -89,6 +101,15 @@ function calcTotals(items, taxRate, discount) {
 // ── Helper: is this user a super_admin? (can edit any record) ─────────────────
 function isSuperAdmin(userId) {
   return db.prepare('SELECT role FROM users WHERE id = ?').get(userId)?.role === 'super_admin';
+}
+
+// ── Helper: a user's effective access to an invoice ───────────────────────────
+// Returns { invoice, access } where access is 'owner' | 'edit' | 'view' | null.
+function invoiceAccess(invoiceId, userId) {
+  const invoice = db.prepare('SELECT * FROM invoices WHERE id = ?').get(invoiceId);
+  if (!invoice) return { invoice: null, access: null };
+  if (invoice.created_by === userId || isSuperAdmin(userId)) return { invoice, access: 'owner' };
+  return { invoice, access: accessFor('invoice_shares', 'invoice_id', invoiceId, userId) };
 }
 
 // ════════════════════════════════════════════════════════════════════════════
@@ -202,20 +223,46 @@ router.delete('/clients/:id', authenticate, (req, res) => {
 // ════════════════════════════════════════════════════════════════════════════
 
 router.get('/', authenticate, (req, res) => {
-  const rows = db.prepare(`
-    SELECT i.*,
-           c.name  AS company_name,
-           cl.name AS client_name
+  const owned = db.prepare(`
+    SELECT i.*, c.name AS company_name, cl.name AS client_name, 'owner' AS access
     FROM invoices i
     LEFT JOIN invoice_my_companies c  ON c.id = i.my_company_id
     LEFT JOIN invoice_clients      cl ON cl.id = i.client_id
     WHERE i.created_by = ?
-    ORDER BY i.created_at DESC
   `).all(req.user.id);
+
+  // Invoices shared with this user (directly or via a group), excluding own.
+  const map = sharedAccessMap('invoice_shares', 'invoice_id', req.user.id);
+  let shared = [];
+  if (map.size) {
+    const ids = [...map.keys()];
+    const ph = ids.map(() => '?').join(',');
+    shared = db.prepare(`
+      SELECT i.*, c.name AS company_name, cl.name AS client_name,
+             u.name AS owner_name
+      FROM invoices i
+      LEFT JOIN invoice_my_companies c  ON c.id = i.my_company_id
+      LEFT JOIN invoice_clients      cl ON cl.id = i.client_id
+      LEFT JOIN users u ON u.id = i.created_by
+      WHERE i.id IN (${ph}) AND i.created_by != ?
+    `).all(...ids, req.user.id).map(r => ({ ...r, access: map.get(r.id), shared: true }));
+  }
+
+  let rows = [...owned, ...shared];
+  if (req.query.client_id)     rows = rows.filter(r => r.client_id === req.query.client_id);
+  if (req.query.my_company_id) rows = rows.filter(r => r.my_company_id === req.query.my_company_id);
+  rows.sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
   res.json(rows);
 });
 
+// Users + groups this user can share with (for the share picker).
+router.get('/share-targets', authenticate, (req, res) => {
+  res.json(shareTargets(req.user.id));
+});
+
 router.get('/:id', authenticate, (req, res) => {
+  const { invoice: exists, access } = invoiceAccess(req.params.id, req.user.id);
+  if (!exists || !access) return res.status(404).json({ error: 'Not found' });
   const invoice = db.prepare(`
     SELECT i.*,
            c.name  AS company_name,
@@ -223,11 +270,10 @@ router.get('/:id', authenticate, (req, res) => {
     FROM invoices i
     LEFT JOIN invoice_my_companies c  ON c.id = i.my_company_id
     LEFT JOIN invoice_clients      cl ON cl.id = i.client_id
-    WHERE i.id = ? AND i.created_by = ?
-  `).get(req.params.id, req.user.id);
-  if (!invoice) return res.status(404).json({ error: 'Not found' });
+    WHERE i.id = ?
+  `).get(req.params.id);
   const items = db.prepare('SELECT * FROM invoice_items WHERE invoice_id = ? ORDER BY position').all(req.params.id);
-  res.json({ ...invoice, items });
+  res.json({ ...invoice, items, access });
 });
 
 router.post('/', authenticate, (req, res) => {
@@ -308,8 +354,9 @@ router.post('/:id/duplicate', authenticate, (req, res) => {
 });
 
 router.put('/:id', authenticate, (req, res) => {
-  const existing = db.prepare('SELECT * FROM invoices WHERE id = ? AND created_by = ?').get(req.params.id, req.user.id);
-  if (!existing) return res.status(404).json({ error: 'Not found' });
+  const { invoice: existing, access } = invoiceAccess(req.params.id, req.user.id);
+  if (!existing || !access) return res.status(404).json({ error: 'Not found' });
+  if (access === 'view') return res.status(403).json({ error: 'You have view-only access to this invoice' });
 
   const {
     invoice_number, my_company_id, client_id, issue_date, due_date,
@@ -365,9 +412,11 @@ router.put('/:id', authenticate, (req, res) => {
 });
 
 router.delete('/:id', authenticate, (req, res) => {
-  const invoice = db.prepare('SELECT id FROM invoices WHERE id = ? AND created_by = ?').get(req.params.id, req.user.id);
+  const { invoice, access } = invoiceAccess(req.params.id, req.user.id);
   if (!invoice) return res.status(404).json({ error: 'Not found' });
+  if (access !== 'owner') return res.status(403).json({ error: 'Only the owner can delete this invoice' });
   db.prepare('DELETE FROM invoice_items WHERE invoice_id = ?').run(req.params.id);
+  db.prepare('DELETE FROM invoice_shares WHERE invoice_id = ?').run(req.params.id);
   db.prepare('DELETE FROM invoices WHERE id = ?').run(req.params.id);
   res.json({ success: true });
 });
@@ -379,6 +428,57 @@ router.delete('/:id', authenticate, (req, res) => {
 router.get('/:id/pdf', authenticate, (req, res) => {
   // PDF export is handled client-side via browser print/preview
   res.status(200).json({ message: 'Use the frontend preview to print or save as PDF' });
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+// SHARING  (owner / super_admin only)
+// ════════════════════════════════════════════════════════════════════════════
+
+function requireInvoiceOwner(req, res) {
+  const { invoice, access } = invoiceAccess(req.params.id, req.user.id);
+  if (!invoice) { res.status(404).json({ error: 'Not found' }); return null; }
+  if (access !== 'owner') { res.status(403).json({ error: 'Only the owner can manage sharing' }); return null; }
+  return invoice;
+}
+
+router.get('/:id/shares', authenticate, (req, res) => {
+  if (!requireInvoiceOwner(req, res)) return;
+  res.json(listShares('invoice_shares', 'invoice_id', req.params.id));
+});
+
+router.post('/:id/shares', authenticate, (req, res) => {
+  if (!requireInvoiceOwner(req, res)) return;
+  const { subject_type, subject_id, access } = req.body;
+  if (!['user', 'group'].includes(subject_type) || !subject_id) return res.status(400).json({ error: 'subject_type and subject_id required' });
+  const acc = access === 'edit' ? 'edit' : 'view';
+  // Validate the subject exists.
+  const ok = subject_type === 'user'
+    ? db.prepare('SELECT 1 FROM users WHERE id = ?').get(subject_id)
+    : db.prepare('SELECT 1 FROM user_groups WHERE id = ?').get(subject_id);
+  if (!ok) return res.status(400).json({ error: 'Unknown user or group' });
+
+  const existing = db.prepare('SELECT id FROM invoice_shares WHERE invoice_id = ? AND subject_type = ? AND subject_id = ?')
+    .get(req.params.id, subject_type, subject_id);
+  if (existing) {
+    db.prepare('UPDATE invoice_shares SET access = ? WHERE id = ?').run(acc, existing.id);
+  } else {
+    db.prepare('INSERT INTO invoice_shares (id, invoice_id, subject_type, subject_id, access, created_by) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(uuidv4(), req.params.id, subject_type, subject_id, acc, req.user.id);
+  }
+  res.json(listShares('invoice_shares', 'invoice_id', req.params.id));
+});
+
+router.put('/:id/shares/:shareId', authenticate, (req, res) => {
+  if (!requireInvoiceOwner(req, res)) return;
+  const acc = req.body.access === 'edit' ? 'edit' : 'view';
+  db.prepare('UPDATE invoice_shares SET access = ? WHERE id = ? AND invoice_id = ?').run(acc, req.params.shareId, req.params.id);
+  res.json(listShares('invoice_shares', 'invoice_id', req.params.id));
+});
+
+router.delete('/:id/shares/:shareId', authenticate, (req, res) => {
+  if (!requireInvoiceOwner(req, res)) return;
+  db.prepare('DELETE FROM invoice_shares WHERE id = ? AND invoice_id = ?').run(req.params.shareId, req.params.id);
+  res.json(listShares('invoice_shares', 'invoice_id', req.params.id));
 });
 
 
