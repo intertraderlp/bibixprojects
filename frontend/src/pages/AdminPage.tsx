@@ -768,8 +768,8 @@ export default function AdminPage() {
         {activeTab === 'groups' ? (
           <GroupsTab users={users} onUsersChanged={setUsers} isSuperAdmin={isSuperAdmin} />
         ) : (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
-          <table className="w-full">
+        <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
+          <table className="w-full min-w-[720px]">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
                 <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">User</th>
