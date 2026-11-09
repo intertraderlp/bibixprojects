@@ -370,10 +370,19 @@ function badgeColor(seed: string): string {
 }
 
 function LinkFavicon({ url, label }: { url: string; label?: string }) {
-  const [failed, setFailed] = useState(false);
   const host = hostOf(url);
-  // Letter badge when there's no favicon to show (load error or unparseable URL).
-  if (failed || !host) {
+  // Favicon providers tried in order; DuckDuckGo serves the real site logo
+  // directly (no redirect, higher-res), Google is a fallback. On the last
+  // failure we show a colored letter badge instead of a broken image.
+  const sources = host
+    ? [
+        `https://icons.duckduckgo.com/ip3/${host}.ico`,
+        `https://www.google.com/s2/favicons?domain=${host}&sz=64`,
+      ]
+    : [];
+  const [idx, setIdx] = useState(0);
+
+  if (!host || idx >= sources.length) {
     const letter = (label?.trim() || host || '?').charAt(0).toUpperCase();
     return (
       <span className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 text-white text-sm font-semibold shadow-sm"
@@ -384,9 +393,9 @@ function LinkFavicon({ url, label }: { url: string; label?: string }) {
   }
   return (
     <span className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 bg-white border border-gray-200 overflow-hidden shadow-sm">
-      <img src={`https://www.google.com/s2/favicons?domain=${host}&sz=64`} alt=""
-        onError={() => setFailed(true)}
-        className="w-5 h-5 object-contain" />
+      <img src={sources[idx]} alt=""
+        onError={() => setIdx(i => i + 1)}
+        className="w-6 h-6 object-contain" />
     </span>
   );
 }
