@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Plus, Pencil, Trash2, Shield, User, Eye, Settings2, ToggleLeft, ToggleRight, ChevronRight, Crown, Users, Tag, X, Check } from 'lucide-react';
+import { Plus, Pencil, Trash2, Shield, User, Eye, Settings2, ToggleLeft, ToggleRight, ChevronRight, Crown, Users, Tag, X, Check, LogIn } from 'lucide-react';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
+import { enterImpersonation } from '../lib/impersonation';
 import type { User as UserType, UserRole, AppModule, UserGroup } from '../types';
 import Avatar from '../components/ui/Avatar';
 import Modal from '../components/ui/Modal';
@@ -691,6 +692,20 @@ export default function AdminPage() {
     }
   };
 
+  const ROLE_RANK: Record<string, number> = { super_admin: 3, admin: 2, user: 1, readonly: 1 };
+  const canImpersonate = (u: AdminUser) =>
+    !!me && u.id !== me.id && (ROLE_RANK[me.role ?? ''] || 0) > (ROLE_RANK[u.role] || 0);
+
+  const handleImpersonate = async (u: AdminUser) => {
+    if (!confirm(`Sign in as ${u.name}? You'll see the app exactly as they do, and can return to your account anytime from the banner at the top.`)) return;
+    try {
+      const { data } = await api.post(`/admin/users/${u.id}/impersonate`);
+      enterImpersonation(data.token, u.name, me?.name || 'Admin');
+    } catch (e: unknown) {
+      toast.error((e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Failed to sign in as user');
+    }
+  };
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   if (loading) return (
@@ -839,6 +854,12 @@ export default function AdminPage() {
                           className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded">
                           <Settings2 size={15} />
                         </button>
+                        {canImpersonate(u) && (
+                          <button onClick={() => handleImpersonate(u)} title={`Sign in as ${u.name}`}
+                            className="p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded">
+                            <LogIn size={15} />
+                          </button>
+                        )}
                         {isSuperAdmin && (
                           <>
                             <button onClick={() => openEdit(u)}
