@@ -769,15 +769,15 @@ export default function AdminPage() {
           <GroupsTab users={users} onUsersChanged={setUsers} isSuperAdmin={isSuperAdmin} />
         ) : (
         <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
-          <table className="w-full min-w-[720px]">
+          <table className="w-full">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">User</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Role</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Groups</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Access</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Joined</th>
-                <th className="px-6 py-3" />
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">User</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Role</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider hidden sm:table-cell">Groups</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider hidden lg:table-cell">Access</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider hidden md:table-cell">Joined</th>
+                <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -787,7 +787,7 @@ export default function AdminPage() {
 
                 return (
                   <tr key={u.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-4">
                       <div className="flex items-center gap-3">
                         <Avatar name={u.name} color={u.avatar_color} size="sm" />
                         <div>
@@ -799,7 +799,7 @@ export default function AdminPage() {
                         </div>
                       </div>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-4">
                       <div className="flex items-center gap-2">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${roleMeta.color}`}>
                           {roleMeta.icon} {roleMeta.label}
@@ -812,7 +812,7 @@ export default function AdminPage() {
                         )}
                       </div>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-4 hidden sm:table-cell">
                       {u.groups?.length > 0 ? (
                         <div className="flex flex-wrap gap-1">
                           {u.groups.map(g => (
@@ -826,7 +826,7 @@ export default function AdminPage() {
                         <span className="text-xs text-gray-400 italic">No group</span>
                       )}
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-4 hidden lg:table-cell">
                       <button
                         onClick={() => setPermUser(u)}
                         className="flex items-center gap-2 text-sm text-gray-600 hover:text-blue-600 group"
@@ -845,10 +845,10 @@ export default function AdminPage() {
                         <ChevronRight size={13} className="text-gray-300 group-hover:text-blue-500" />
                       </button>
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-400">
+                    <td className="px-4 py-4 text-sm text-gray-400 hidden md:table-cell">
                       {new Date(u.created_at).toLocaleDateString()}
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-4">
                       <div className="flex items-center gap-1 justify-end">
                         <button onClick={() => setPermUser(u)} title="Manage permissions"
                           className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded">
