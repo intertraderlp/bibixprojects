@@ -4,7 +4,7 @@ import { useAuthStore } from '../store/authStore';
 import { format, parseISO } from 'date-fns';
 import Avatar from '../components/ui/Avatar';
 import { useEffect, useRef, useState } from 'react';
-import { Settings, X, Check } from 'lucide-react';
+import { Settings, X, Check, Plus, Trash2, Link2, ChevronDown, ExternalLink } from 'lucide-react';
 
 // ── World Clock ───────────────────────────────────────────────────────────────
 
@@ -344,6 +344,138 @@ function WorldClocks({ userId }: { userId: string }) {
   );
 }
 
+// ── Quick Links ───────────────────────────────────────────────────────────────
+
+interface QuickLink { id: string; title: string; url: string; }
+
+const MAX_LINKS = 10;
+
+// Prepend https:// when the user omits a scheme, so the href actually navigates.
+function normalizeUrl(raw: string): string {
+  const t = raw.trim();
+  if (!t) return '';
+  return /^https?:\/\//i.test(t) ? t : `https://${t}`;
+}
+
+function hostOf(url: string): string {
+  try { return new URL(normalizeUrl(url)).hostname; } catch { return ''; }
+}
+
+function LinkFavicon({ url }: { url: string }) {
+  const [failed, setFailed] = useState(false);
+  const host = hostOf(url);
+  if (failed || !host) {
+    return <span className="w-7 h-7 rounded-md bg-blue-50 text-monday-blue flex items-center justify-center flex-shrink-0"><Link2 size={15} /></span>;
+  }
+  return (
+    <img src={`https://www.google.com/s2/favicons?domain=${host}&sz=64`} alt=""
+      onError={() => setFailed(true)}
+      className="w-7 h-7 rounded-md flex-shrink-0 bg-white object-contain" />
+  );
+}
+
+function QuickLinks({ userId }: { userId: string }) {
+  const storageKey = `quick_links_${userId}`;
+  const load = (): QuickLink[] => {
+    try { const r = localStorage.getItem(storageKey); const p = r ? JSON.parse(r) : []; return Array.isArray(p) ? p : []; }
+    catch { return []; }
+  };
+  const [links, setLinks] = useState<QuickLink[]>(load);
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState<QuickLink[]>([]);
+
+  const persist = (next: QuickLink[]) => {
+    setLinks(next);
+    try { localStorage.setItem(storageKey, JSON.stringify(next)); } catch { /* ignore quota */ }
+  };
+
+  const openEditor = () => {
+    setDraft(links.length ? links.map(l => ({ ...l })) : [{ id: crypto.randomUUID(), title: '', url: '' }]);
+    setEditing(true);
+  };
+
+  const save = () => {
+    const cleaned = draft
+      .map(l => ({ ...l, title: l.title.trim(), url: l.url.trim() }))
+      .filter(l => l.url) // a url is required; title falls back to the host
+      .map(l => ({ ...l, title: l.title || hostOf(l.url) || l.url }))
+      .slice(0, MAX_LINKS);
+    persist(cleaned);
+    setEditing(false);
+  };
+
+  const updateDraft = (id: string, field: 'title' | 'url', value: string) =>
+    setDraft(d => d.map(l => l.id === id ? { ...l, [field]: value } : l));
+  const removeDraft = (id: string) => setDraft(d => d.filter(l => l.id !== id));
+  const addDraft = () => setDraft(d => d.length < MAX_LINKS ? [...d, { id: crypto.randomUUID(), title: '', url: '' }] : d);
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 px-6 py-4 mb-6">
+      <div className="flex items-center justify-between mb-3">
+        <span className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Quick Links</span>
+        <button onClick={openEditor} className="text-gray-400 hover:text-gray-600 p-1 rounded" title="Edit quick links">
+          <Settings size={14} />
+        </button>
+      </div>
+
+      {links.length === 0 ? (
+        <button onClick={openEditor}
+          className="w-full flex items-center justify-center gap-2 py-6 text-sm text-gray-400 hover:text-monday-blue border-2 border-dashed border-gray-200 hover:border-monday-blue rounded-lg transition-colors">
+          <Plus size={16} /> Add quick links for fast access
+        </button>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2">
+          {links.map(l => (
+            <a key={l.id} href={normalizeUrl(l.url)} target="_blank" rel="noopener noreferrer"
+              className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-gray-200 hover:border-monday-blue hover:bg-blue-50 transition-colors group min-w-0">
+              <LinkFavicon url={l.url} />
+              <span className="text-sm font-medium text-gray-700 group-hover:text-monday-blue truncate flex-1 min-w-0">{l.title}</span>
+              <ExternalLink size={12} className="text-gray-300 group-hover:text-monday-blue flex-shrink-0" />
+            </a>
+          ))}
+        </div>
+      )}
+
+      {editing && (
+        <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={e => { if (e.target === e.currentTarget) setEditing(false); }}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[80vh] flex flex-col">
+            <div className="flex items-center justify-between px-5 pt-5 pb-3 border-b">
+              <div>
+                <h3 className="font-semibold text-gray-900">Quick Links</h3>
+                <p className="text-xs text-gray-400 mt-0.5">{draft.length}/{MAX_LINKS} links — only you see these</p>
+              </div>
+              <button onClick={() => setEditing(false)} className="text-gray-400 hover:text-gray-600"><X size={18} /></button>
+            </div>
+            <div className="overflow-y-auto flex-1 px-5 py-3 space-y-2">
+              {draft.map((l, i) => (
+                <div key={l.id} className="flex items-center gap-2">
+                  <span className="text-xs text-gray-300 w-4 text-right flex-shrink-0">{i + 1}</span>
+                  <input value={l.title} onChange={e => updateDraft(l.id, 'title', e.target.value)} placeholder="Label (optional)"
+                    className="w-1/3 border border-gray-200 rounded-lg px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-monday-blue" />
+                  <input value={l.url} onChange={e => updateDraft(l.id, 'url', e.target.value)} placeholder="example.com"
+                    className="flex-1 min-w-0 border border-gray-200 rounded-lg px-2.5 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-monday-blue" />
+                  <button onClick={() => removeDraft(l.id)} className="text-gray-300 hover:text-red-500 p-1 flex-shrink-0" title="Remove">
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              ))}
+              {draft.length < MAX_LINKS && (
+                <button onClick={addDraft} className="flex items-center gap-1.5 text-sm text-monday-blue hover:text-blue-600 mt-1 px-1">
+                  <Plus size={15} /> Add link
+                </button>
+              )}
+            </div>
+            <div className="px-5 py-4 border-t flex gap-2 justify-end">
+              <button onClick={() => setEditing(false)} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
+              <button onClick={save} className="px-4 py-2 text-sm bg-monday-blue text-white rounded-lg hover:bg-blue-600">Save</button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Page ──────────────────────────────────────────────────────────────────────
 
 export default function Home() {
@@ -354,6 +486,18 @@ export default function Home() {
   const allBoards = Object.values(boards).flat();
   const hour = new Date().getHours();
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+
+  const boardsCollapseKey = `recent_boards_collapsed_${user?.id ?? 'anon'}`;
+  const [boardsCollapsed, setBoardsCollapsed] = useState<boolean>(() => {
+    try { return localStorage.getItem(boardsCollapseKey) === '1'; } catch { return false; }
+  });
+  const toggleBoards = () => {
+    setBoardsCollapsed(prev => {
+      const next = !prev;
+      try { localStorage.setItem(boardsCollapseKey, next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  };
 
   return (
     <div className="flex-1 overflow-y-auto bg-gray-50">
@@ -367,6 +511,8 @@ export default function Home() {
         </div>
 
         {user && <WorldClocks userId={user.id} />}
+
+        {user && <QuickLinks userId={user.id} />}
 
         <div className="grid grid-cols-3 gap-4 mb-8">
           <div className="bg-white rounded-xl p-5 border border-gray-200">
@@ -383,8 +529,14 @@ export default function Home() {
           </div>
         </div>
 
-        <h2 className="text-lg font-bold text-gray-900 mb-4">Recent Boards</h2>
-        {allBoards.length === 0 ? (
+        <button onClick={toggleBoards}
+          className="flex items-center gap-2 mb-4 group" title={boardsCollapsed ? 'Expand' : 'Minimize'}>
+          <ChevronDown size={18}
+            className={`text-gray-400 group-hover:text-gray-700 transition-transform ${boardsCollapsed ? '-rotate-90' : ''}`} />
+          <h2 className="text-lg font-bold text-gray-900">Recent Boards</h2>
+          {boardsCollapsed && <span className="text-xs text-gray-400 font-normal">({allBoards.length})</span>}
+        </button>
+        {boardsCollapsed ? null : allBoards.length === 0 ? (
           <div className="bg-white rounded-xl p-12 border border-gray-200 text-center">
             <div className="text-4xl mb-3">📋</div>
             <p className="text-gray-500 text-sm">No boards yet — create one from the sidebar!</p>
