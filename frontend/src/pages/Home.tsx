@@ -361,16 +361,33 @@ function hostOf(url: string): string {
   try { return new URL(normalizeUrl(url)).hostname; } catch { return ''; }
 }
 
-function LinkFavicon({ url }: { url: string }) {
+// Deterministic pastel background for the letter-fallback badge, derived from the host.
+const BADGE_COLORS = ['#0073ea', '#e2445c', '#00c875', '#fdab3d', '#a25ddc', '#037f4c', '#ff642e', '#579bfc'];
+function badgeColor(seed: string): string {
+  let h = 0;
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
+  return BADGE_COLORS[h % BADGE_COLORS.length];
+}
+
+function LinkFavicon({ url, label }: { url: string; label?: string }) {
   const [failed, setFailed] = useState(false);
   const host = hostOf(url);
+  // Letter badge when there's no favicon to show (load error or unparseable URL).
   if (failed || !host) {
-    return <span className="w-7 h-7 rounded-md bg-blue-50 text-monday-blue flex items-center justify-center flex-shrink-0"><Link2 size={15} /></span>;
+    const letter = (label?.trim() || host || '?').charAt(0).toUpperCase();
+    return (
+      <span className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 text-white text-sm font-semibold shadow-sm"
+        style={{ backgroundColor: badgeColor(host || label || '?') }}>
+        {letter || <Link2 size={16} />}
+      </span>
+    );
   }
   return (
-    <img src={`https://www.google.com/s2/favicons?domain=${host}&sz=64`} alt=""
-      onError={() => setFailed(true)}
-      className="w-7 h-7 rounded-md flex-shrink-0 bg-white object-contain" />
+    <span className="w-9 h-9 rounded-full flex items-center justify-center flex-shrink-0 bg-white border border-gray-200 overflow-hidden shadow-sm">
+      <img src={`https://www.google.com/s2/favicons?domain=${host}&sz=64`} alt=""
+        onError={() => setFailed(true)}
+        className="w-5 h-5 object-contain" />
+    </span>
   );
 }
 
@@ -428,7 +445,7 @@ function QuickLinks({ userId }: { userId: string }) {
           {links.map(l => (
             <a key={l.id} href={normalizeUrl(l.url)} target="_blank" rel="noopener noreferrer"
               className="flex items-center gap-2 px-3 py-2.5 rounded-lg border border-gray-200 hover:border-monday-blue hover:bg-blue-50 transition-colors group min-w-0">
-              <LinkFavicon url={l.url} />
+              <LinkFavicon url={l.url} label={l.title} />
               <span className="text-sm font-medium text-gray-700 group-hover:text-monday-blue truncate flex-1 min-w-0">{l.title}</span>
               <ExternalLink size={12} className="text-gray-300 group-hover:text-monday-blue flex-shrink-0" />
             </a>
