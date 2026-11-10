@@ -18,6 +18,7 @@ import SchedulingPage from './pages/SchedulingPage';
 import CRMPage from './pages/CRMPage';
 import InvoicePage from './pages/InvoicePage';
 import PublicFormPage from './pages/PublicFormPage';
+import AvailabilityPage from './pages/AvailabilityPage';
 import InstagramPage from './pages/InstagramPage';
 import LinkedInPage from './pages/LinkedInPage';
 import BackupsPage from './pages/BackupsPage';
@@ -52,6 +53,7 @@ export default function App() {
     <Routes>
       <Route path="/schedule/:userId" element={<BookingPage />} />
       <Route path="/form/:formId" element={<PublicFormPage />} />
+      <Route path="/availability/:token" element={<AvailabilityPage />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Navigate to="/login" replace />} />
       <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>

@@ -176,6 +176,21 @@ function CalendarSection() {
   const [status, setStatus]         = useState<CalStatus>({ google: [], microsoft: [] });
   const [loading, setLoading]       = useState(true);
   const [connecting, setConnecting] = useState<string | null>(null); // 'google' | 'microsoft'
+  const [availUrl, setAvailUrl]     = useState('');
+  const [copied, setCopied]         = useState(false);
+
+  useEffect(() => {
+    api.get('/calendar/availability-link').then(r => setAvailUrl(r.data.url)).catch(() => {});
+  }, []);
+
+  const copyAvail = () => {
+    navigator.clipboard?.writeText(availUrl).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(() => {});
+  };
+  const regenAvail = async () => {
+    if (!confirm('Generate a new link? The old link will stop working.')) return;
+    try { const { data } = await api.post('/calendar/availability-link/regenerate'); setAvailUrl(data.url); toast.success('New availability link generated'); }
+    catch { toast.error('Failed to regenerate link'); }
+  };
 
   const loadStatus = async () => {
     try { const { data } = await api.get('/calendar/status'); setStatus({ google: data.google || [], microsoft: data.microsoft || [] }); }
@@ -279,9 +294,33 @@ function CalendarSection() {
 
         {totalConnected > 0 && (
           <div className="bg-blue-50 border border-blue-100 rounded-lg p-3 text-xs text-blue-700">
-            <strong>How to use:</strong> Open any board → switch to <strong>Calendar view</strong> → all calendar events appear alongside your tasks. Click <strong>+</strong> on any day to create a meeting.
+            <strong>How to use:</strong> Open the <strong>Calendar</strong> → all calendar events appear alongside your tasks. Click <strong>+</strong> on any day to create a meeting you can share with teammates or keep as “Busy”.
           </div>
         )}
+
+        {/* External availability link */}
+        <div className="border-t border-gray-100 pt-4">
+          <div className="flex items-center gap-2 mb-1">
+            <Link2 size={15} className="text-gray-500" />
+            <h3 className="text-sm font-semibold text-gray-800">Public availability link</h3>
+          </div>
+          <p className="text-xs text-gray-500 mb-3">
+            Share this link with people outside Bibix so they can see when you're <strong>busy</strong> — only your busy time blocks are shown, never the meeting details.
+          </p>
+          <div className="flex items-center gap-2">
+            <input readOnly value={availUrl} placeholder="Generating…"
+              className="flex-1 border border-gray-200 rounded-lg px-3 py-2 text-xs text-gray-600 bg-gray-50 font-mono truncate" />
+            <button onClick={copyAvail} disabled={!availUrl}
+              className="flex items-center gap-1.5 px-3 py-2 bg-monday-blue text-white text-xs font-medium rounded-lg hover:bg-blue-600 disabled:opacity-50">
+              {copied ? <><CheckCircle size={13} /> Copied</> : <><Copy size={13} /> Copy</>}
+            </button>
+            <button onClick={regenAvail} disabled={!availUrl}
+              className="flex items-center gap-1.5 px-3 py-2 border border-gray-200 text-gray-600 text-xs font-medium rounded-lg hover:bg-gray-50 disabled:opacity-50"
+              title="Generate a new link (revokes the old one)">
+              <RefreshCw size={13} />
+            </button>
+          </div>
+        </div>
       </div>
     </div>
   );

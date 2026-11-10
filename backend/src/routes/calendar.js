@@ -337,4 +337,283 @@ router.delete('/disconnect/:connId', authenticate, (req, res) => {
   res.json({ success: true });
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+// Bibix meetings — native events with per-meeting visibility + sharing.
+//   visibility 'details' → shared people see the full meeting
+//   visibility 'busy'    → shared people only see a "Busy" block (no details)
+//   internal audience    → Bibix users / groups (meeting_shares)
+//   external audience     → a per-user public availability link (busy only)
+// ════════════════════════════════════════════════════════════════════════════
+const crypto = require('crypto');
+const { shareTargets, userGroupIds, listShares } = require('../utils/sharing');
+
+db.exec(`CREATE TABLE IF NOT EXISTS meetings (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  title TEXT NOT NULL,
+  description TEXT,
+  location TEXT,
+  start TEXT NOT NULL,
+  end TEXT NOT NULL,
+  all_day INTEGER NOT NULL DEFAULT 0,
+  visibility TEXT NOT NULL DEFAULT 'details',
+  external_conn_id TEXT,
+  external_event_id TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+)`);
+db.exec(`CREATE TABLE IF NOT EXISTS meeting_shares (
+  id TEXT PRIMARY KEY,
+  meeting_id TEXT NOT NULL,
+  subject_type TEXT NOT NULL,
+  subject_id TEXT NOT NULL,
+  access TEXT NOT NULL DEFAULT 'view',
+  created_by TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE(meeting_id, subject_type, subject_id)
+)`);
+try { db.exec('ALTER TABLE users ADD COLUMN availability_token TEXT'); } catch (_) {}
+
+function toDbBool(v) { return v ? 1 : 0; }
+
+// Mirror a Bibix meeting onto a connected external calendar; returns its event id.
+async function createOnProvider(conn, { title, start, end, location, description, attendees, allDay }) {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (conn.provider === 'google') {
+    const auth = await getGoogleClient(conn);
+    const cal  = google.calendar({ version: 'v3', auth });
+    const event = {
+      summary: title, location, description,
+      start: allDay ? { date: start.split('T')[0] } : { dateTime: start, timeZone: tz },
+      end:   allDay ? { date: end.split('T')[0]   } : { dateTime: end,   timeZone: tz },
+      attendees: attendees?.length ? attendees.map(e => ({ email: e })) : undefined,
+      reminders: { useDefault: true },
+    };
+    const { data } = await cal.events.insert({ calendarId: 'primary', resource: event, sendUpdates: attendees?.length ? 'all' : 'none' });
+    return data.id;
+  }
+  if (conn.provider === 'microsoft') {
+    const body = {
+      subject: title,
+      location: location ? { displayName: location } : undefined,
+      body: description ? { contentType: 'text', content: description } : undefined,
+      start: { dateTime: start, timeZone: tz },
+      end:   { dateTime: end,   timeZone: tz },
+      isAllDay: allDay || false,
+      attendees: attendees?.length ? attendees.map(e => ({ emailAddress: { address: e }, type: 'required' })) : undefined,
+    };
+    const data = await msGraphRequest(conn, '/me/events', 'POST', body);
+    return data.id;
+  }
+  return null;
+}
+
+async function updateOnProvider(conn, eventId, { title, start, end, location, description, allDay }) {
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+  if (conn.provider === 'google') {
+    const auth = await getGoogleClient(conn);
+    const cal  = google.calendar({ version: 'v3', auth });
+    await cal.events.patch({ calendarId: 'primary', eventId, resource: {
+      summary: title, location, description,
+      start: allDay ? { date: (start || '').split('T')[0] } : { dateTime: start, timeZone: tz },
+      end:   allDay ? { date: (end   || '').split('T')[0] } : { dateTime: end,   timeZone: tz },
+    } });
+  } else if (conn.provider === 'microsoft') {
+    await msGraphRequest(conn, `/me/events/${eventId}`, 'PATCH', {
+      subject: title,
+      location: location ? { displayName: location } : undefined,
+      body: description ? { contentType: 'text', content: description } : undefined,
+      start: { dateTime: start, timeZone: tz },
+      end:   { dateTime: end,   timeZone: tz },
+      isAllDay: !!allDay,
+    });
+  }
+}
+
+async function deleteOnProvider(conn, eventId) {
+  if (conn.provider === 'google') {
+    const auth = await getGoogleClient(conn);
+    await google.calendar({ version: 'v3', auth }).events.delete({ calendarId: 'primary', eventId });
+  } else if (conn.provider === 'microsoft') {
+    await msGraphRequest(conn, `/me/events/${eventId}`, 'DELETE');
+  }
+}
+
+function meetingIdsSharedWith(userId) {
+  const gids = userGroupIds(userId);
+  let sql = `SELECT meeting_id FROM meeting_shares WHERE (subject_type='user' AND subject_id=?)`;
+  const params = [userId];
+  if (gids.length) { sql += ` OR (subject_type='group' AND subject_id IN (${gids.map(() => '?').join(',')}))`; params.push(...gids); }
+  return db.prepare(sql).all(...params).map(r => r.meeting_id);
+}
+
+function replaceMeetingShares(meetingId, shares, createdBy) {
+  db.prepare('DELETE FROM meeting_shares WHERE meeting_id=?').run(meetingId);
+  for (const s of (shares || [])) {
+    if (!s || (s.subject_type !== 'user' && s.subject_type !== 'group') || !s.subject_id) continue;
+    try {
+      db.prepare('INSERT OR IGNORE INTO meeting_shares (id, meeting_id, subject_type, subject_id, access, created_by) VALUES (?,?,?,?,?,?)')
+        .run(uuidv4(), meetingId, s.subject_type, s.subject_id, 'view', createdBy);
+    } catch (_) {}
+  }
+}
+
+function mapMeeting(m, { mine, strip, owner_name }) {
+  const busy = !!strip;
+  return {
+    id: m.id,
+    _kind: 'meeting',
+    _mine: !!mine,
+    _shared: !mine,
+    _busy: busy,
+    _visibility: m.visibility,
+    owner_name: owner_name || null,
+    title: busy ? 'Busy' : m.title,
+    description: busy ? null : m.description,
+    location: busy ? null : m.location,
+    all_day: !!m.all_day,
+    start: m.start,
+    end: m.end,
+    shares: mine ? listShares('meeting_shares', 'meeting_id', m.id) : undefined,
+    external_conn_id: mine ? m.external_conn_id : undefined,
+  };
+}
+
+// Users + groups available to share a meeting with.
+router.get('/meetings/share-targets', authenticate, (req, res) => {
+  res.json(shareTargets(req.user.id));
+});
+
+// List meetings in a range: owned (full) + shared-to-me ('busy' stripped of detail).
+router.get('/meetings', authenticate, (req, res) => {
+  const rangeStart = req.query.start || '0000';
+  const rangeEnd   = req.query.end   || '9999';
+  const out = [];
+
+  const owned = db.prepare('SELECT * FROM meetings WHERE user_id=? AND start <= ? AND end >= ?')
+    .all(req.user.id, rangeEnd, rangeStart);
+  owned.forEach(m => out.push(mapMeeting(m, { mine: true, strip: false })));
+
+  const sharedIds = meetingIdsSharedWith(req.user.id);
+  if (sharedIds.length) {
+    const ph  = sharedIds.map(() => '?').join(',');
+    const rows = db.prepare(`SELECT m.*, u.name AS owner_name FROM meetings m JOIN users u ON u.id=m.user_id WHERE m.id IN (${ph}) AND m.start <= ? AND m.end >= ? AND m.user_id != ?`)
+      .all(...sharedIds, rangeEnd, rangeStart, req.user.id);
+    rows.forEach(m => out.push(mapMeeting(m, { mine: false, strip: m.visibility === 'busy', owner_name: m.owner_name })));
+  }
+  res.json(out);
+});
+
+// Create a Bibix meeting (optionally mirrored to an external calendar).
+router.post('/meetings', authenticate, async (req, res) => {
+  const { title, description, location, start, end, allDay, visibility, shares, externalConnId, attendees } = req.body;
+  if (!title || !start || !end) return res.status(400).json({ error: 'title, start and end are required' });
+  const vis = visibility === 'busy' ? 'busy' : 'details';
+  const id = uuidv4();
+  let externalEventId = null, externalWarning = null;
+
+  if (externalConnId) {
+    const conn = db.prepare('SELECT * FROM calendar_connections WHERE id=? AND user_id=?').get(externalConnId, req.user.id);
+    if (conn) {
+      try { externalEventId = await createOnProvider(conn, { title, start, end, location, description, attendees, allDay }); }
+      catch (e) { externalWarning = `Saved in Bibix, but adding to ${conn.provider} failed: ${e.message}`; }
+    }
+  }
+
+  db.prepare(`INSERT INTO meetings (id,user_id,title,description,location,start,end,all_day,visibility,external_conn_id,external_event_id)
+              VALUES (?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(id, req.user.id, title, description || null, location || null, start, end, toDbBool(allDay), vis, externalConnId || null, externalEventId);
+  replaceMeetingShares(id, shares, req.user.id);
+
+  const m = db.prepare('SELECT * FROM meetings WHERE id=?').get(id);
+  res.json({ ...mapMeeting(m, { mine: true, strip: false }), externalWarning });
+});
+
+// Update an owned meeting (and best-effort its external mirror).
+router.put('/meetings/:id', authenticate, async (req, res) => {
+  const m = db.prepare('SELECT * FROM meetings WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
+  if (!m) return res.status(404).json({ error: 'Meeting not found' });
+  const { title, description, location, start, end, allDay, visibility, shares } = req.body;
+  const vis = visibility === 'busy' ? 'busy' : (visibility === 'details' ? 'details' : m.visibility);
+  const newAllDay = allDay === undefined ? m.all_day : toDbBool(allDay);
+
+  db.prepare(`UPDATE meetings SET title=COALESCE(?,title), description=?, location=?, start=COALESCE(?,start), end=COALESCE(?,end), all_day=?, visibility=? WHERE id=?`)
+    .run(title ?? null, description ?? null, location ?? null, start ?? null, end ?? null, newAllDay, vis, m.id);
+  if (shares !== undefined) replaceMeetingShares(m.id, shares, req.user.id);
+
+  if (m.external_conn_id && m.external_event_id) {
+    const conn = db.prepare('SELECT * FROM calendar_connections WHERE id=? AND user_id=?').get(m.external_conn_id, req.user.id);
+    if (conn) { try { await updateOnProvider(conn, m.external_event_id, { title: title ?? m.title, start: start ?? m.start, end: end ?? m.end, location: location ?? m.location, description: description ?? m.description, allDay: !!newAllDay }); } catch (_) {} }
+  }
+  const updated = db.prepare('SELECT * FROM meetings WHERE id=?').get(m.id);
+  res.json(mapMeeting(updated, { mine: true, strip: false }));
+});
+
+// Delete an owned meeting (and its external mirror).
+router.delete('/meetings/:id', authenticate, async (req, res) => {
+  const m = db.prepare('SELECT * FROM meetings WHERE id=? AND user_id=?').get(req.params.id, req.user.id);
+  if (!m) return res.status(404).json({ error: 'Meeting not found' });
+  if (m.external_conn_id && m.external_event_id) {
+    const conn = db.prepare('SELECT * FROM calendar_connections WHERE id=? AND user_id=?').get(m.external_conn_id, req.user.id);
+    if (conn) { try { await deleteOnProvider(conn, m.external_event_id); } catch (_) {} }
+  }
+  db.prepare('DELETE FROM meeting_shares WHERE meeting_id=?').run(m.id);
+  db.prepare('DELETE FROM meetings WHERE id=?').run(m.id);
+  res.json({ success: true });
+});
+
+// ── External availability link (public busy view) ─────────────────────────────
+function ensureAvailabilityToken(userId) {
+  const u = db.prepare('SELECT availability_token FROM users WHERE id=?').get(userId);
+  if (u && u.availability_token) return u.availability_token;
+  const token = crypto.randomBytes(16).toString('hex');
+  db.prepare('UPDATE users SET availability_token=? WHERE id=?').run(token, userId);
+  return token;
+}
+
+router.get('/availability-link', authenticate, (req, res) => {
+  const token = ensureAvailabilityToken(req.user.id);
+  res.json({ token, url: `${APP_URL}/availability/${token}` });
+});
+
+router.post('/availability-link/regenerate', authenticate, (req, res) => {
+  const token = crypto.randomBytes(16).toString('hex');
+  db.prepare('UPDATE users SET availability_token=? WHERE id=?').run(token, req.user.id);
+  res.json({ token, url: `${APP_URL}/availability/${token}` });
+});
+
+// Public: anyone with the link sees busy blocks only (no titles/details).
+router.get('/public/availability/:token', async (req, res) => {
+  const { start, end } = req.query;
+  const user = db.prepare('SELECT id, name FROM users WHERE availability_token=?').get(req.params.token);
+  if (!user) return res.status(404).json({ error: 'Not found' });
+  const rangeStart = start || '0000', rangeEnd = end || '9999';
+  const busy = [];
+
+  db.prepare('SELECT start, end, all_day FROM meetings WHERE user_id=? AND start <= ? AND end >= ?')
+    .all(user.id, rangeEnd, rangeStart)
+    .forEach(m => busy.push({ start: m.start, end: m.end, allDay: !!m.all_day }));
+
+  if (start && end) {
+    try {
+      const conns = db.prepare('SELECT * FROM calendar_connections WHERE user_id=?').all(user.id);
+      await Promise.all(conns.map(async (conn) => {
+        try {
+          if (conn.provider === 'google') {
+            const auth = await getGoogleClient(conn);
+            const cal  = google.calendar({ version: 'v3', auth });
+            const { data } = await cal.events.list({ calendarId: 'primary', timeMin: start, timeMax: end, singleEvents: true, orderBy: 'startTime', maxResults: 100 });
+            (data.items || []).forEach(ev => busy.push({ start: ev.start?.dateTime || ev.start?.date, end: ev.end?.dateTime || ev.end?.date, allDay: !ev.start?.dateTime }));
+          } else if (conn.provider === 'microsoft') {
+            const data = await msGraphRequest(conn, `/me/calendarView?startDateTime=${encodeURIComponent(start)}&endDateTime=${encodeURIComponent(end)}&$top=100&$select=start,end,isAllDay`);
+            (data.value || []).forEach(ev => busy.push({ start: ev.start?.dateTime, end: ev.end?.dateTime, allDay: ev.isAllDay }));
+          }
+        } catch (_) {}
+      }));
+    } catch (_) {}
+  }
+
+  busy.sort((a, b) => (a.start || '').localeCompare(b.start || ''));
+  res.json({ name: user.name, busy });
+});
+
 module.exports = router;
