@@ -669,7 +669,15 @@ export default function TableView() {
   const applyGroupFilter = (groupId: string, item: Item) => {
     const f = groupFilters[groupId];
     if (!f) return true;
-    if (f.name && !item.name.toLowerCase().includes(f.name.toLowerCase())) return false;
+    // Free-text search box: match against the item name AND every column value
+    // (searches the whole group — all items are loaded, not just the page).
+    if (f.name) {
+      const q = f.name.toLowerCase();
+      const inName = item.name.toLowerCase().includes(q);
+      const inCols = inName || sortedColumns.some(c =>
+        String(store.getValue(item.id, c.id) ?? '').toLowerCase().includes(q));
+      if (!inName && !inCols) return false;
+    }
     for (const [colId, val] of Object.entries(f.cols || {})) {
       if (!val) continue;
       const col = sortedColumns.find(c => c.id === colId);
@@ -872,7 +880,7 @@ export default function TableView() {
                             <input
                               value={groupFilters[group.id]?.name ?? ''}
                               onChange={e => setNameFilter(group.id, e.target.value)}
-                              placeholder="Search items…"
+                              placeholder="Search all columns…"
                               className="flex-1 text-xs bg-transparent outline-none placeholder-gray-400"
                             />
                             {hasActiveFilter(group.id) && (
