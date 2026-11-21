@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8" /><title>Bibix Chat AI</title><link rel="stylesheet" href="popup.css" /></head>
+<body>
+  <header><span class="logo">A</span><strong>Bibix Chat AI</strong><label class="switch"><input type="checkbox" id="enabled" /><span></span></label></header>
+  <div id="notchat" class="muted">Open <a href="https://web.whatsapp.com" target="_blank">WhatsApp Web</a> or <a href="https://web.telegram.org" target="_blank">Telegram Web</a> to use the toolbar.</div>
+  <main>
+    <div id="chat" class="chatline muted"></div>
+    <label>Provider <select id="provider"></select></label>
+    <label>My language <input id="myLanguage" list="langs" /></label>
+    <label><span id="targetLabel">Send messages in</span> <input id="targetLanguage" list="langs" /></label>
+    <label class="check"><input type="checkbox" id="autoIncoming" /> Translate incoming messages</label>
+    <datalist id="langs"></datalist>
+    <div class="row"><button id="translateVisible">Translate visible now</button><button id="options">All settings…</button></div>
+    <div id="status" class="muted"></div>
+  </main>
+  <script src="../providers.js"></script><script src="popup.js"></script>
+</body></html>

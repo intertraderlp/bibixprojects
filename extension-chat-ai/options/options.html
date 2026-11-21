@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Bibix Chat AI — Settings</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><span class="logo">A</span><div><h1>Bibix Chat AI</h1><p>WhatsApp Web &amp; Telegram Web translator</p></div></div>
+    <label class="switch"><input type="checkbox" id="enabled" /><span></span> Extension enabled</label>
+  </header>
+
+  <main>
+    <section class="card">
+      <h2>1 · Translation defaults</h2>
+      <div class="grid">
+        <label>My language <small>what you read and type in</small>
+          <input id="myLanguage" list="langs" placeholder="English" /></label>
+        <label>Send messages in <small>default; can be changed per chat from the toolbar</small>
+          <input id="targetLanguage" list="langs" placeholder="Spanish" /></label>
+        <label>Translate incoming messages
+          <select id="autoIncoming"><option value="1">Yes — show translation under each message</option><option value="0">No — only on demand</option></select></label>
+        <label>On chat open, translate the last… <small>existing incoming messages (cost control)</small>
+          <input id="initialIncoming" type="number" min="0" max="200" /></label>
+        <label>Under my sent messages, show what I originally typed
+          <select id="showOriginalOutgoing"><option value="1">Yes</option><option value="0">No</option></select></label>
+        <label>Pressing Enter in the chat <small>Shift+Enter is always a new line</small>
+          <select id="enterTranslates"><option value="1">Translates and sends (when the toolbar is on)</option><option value="0">Sends as typed (use the button / Ctrl+Shift+Enter to translate)</option></select></label>
+        <label class="wide">Style instructions <small>optional, e.g. “informal, use tú”, “business formal”, “keep it short”</small>
+          <input id="style" placeholder="" /></label>
+      </div>
+      <datalist id="langs"></datalist>
+    </section>
+
+    <section class="card">
+      <h2>2 · AI provider</h2>
+      <p class="hint">Pick the provider used for translation, then paste its API key. Keys are stored only in this browser (<code>chrome.storage.local</code>) and sent only to that provider.</p>
+      <label class="inline">Active provider <select id="provider"></select></label>
+      <div id="providers"></div>
+    </section>
+
+    <section class="card">
+      <h2>3 · Keyboard shortcuts (inside the chat)</h2>
+      <table class="keys">
+        <tr><td><kbd>Ctrl/⌘</kbd> + <kbd>Shift</kbd> + <kbd>Enter</kbd></td><td>Translate the draft and send it</td></tr>
+        <tr><td><kbd>Ctrl/⌘</kbd> + <kbd>Shift</kbd> + <kbd>T</kbd></td><td>Translate the draft in place (review, then press Enter yourself)</td></tr>
+        <tr><td><kbd>Ctrl/⌘</kbd> + <kbd>Shift</kbd> + <kbd>U</kbd></td><td>Undo: restore the original draft</td></tr>
+      </table>
+    </section>
+  </main>
+
+  <footer><span id="status"></span><button id="save" class="primary">Save</button></footer>
+  <script src="../providers.js"></script>
+  <script src="options.js"></script>
+</body>
+</html>
