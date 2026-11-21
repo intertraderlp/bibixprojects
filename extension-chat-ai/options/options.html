@@ -48,6 +48,17 @@
         <tr><td><kbd>Ctrl/⌘</kbd> + <kbd>Shift</kbd> + <kbd>U</kbd></td><td>Undo: restore the original draft</td></tr>
       </table>
     </section>
+    <section class="card" id="quick-answers">
+      <h2>4 · Quick answers</h2>
+      <p class="hint">Ready-made replies, organised in groups. In the chat, click <b>⚡</b> in the toolbar (or <kbd>Ctrl/⌘</kbd>+<kbd>Shift</kbd>+<kbd>Q</kbd>):
+        <b>one click</b> puts the answer in the message box so you can edit it (Enter then translates &amp; sends), <b>double-click</b> translates it to the chat's language and sends it right away.
+        Write answers in your own language.</p>
+      <div class="qa-wrap">
+        <div class="qa-groups"><div class="qa-glist"></div><button id="qa-add-group">+ Group</button></div>
+        <div class="qa-items"><div class="qa-ilist"></div><button id="qa-add-item">+ Answer</button></div>
+      </div>
+      <div class="row" style="margin-top:10px"><button id="qa-export">Export JSON</button><button id="qa-import">Import JSON</button><input type="file" id="qa-file" accept="application/json" hidden /></div>
+    </section>
   </main>
 
   <footer><span id="status"></span><button id="save" class="primary">Save</button></footer>

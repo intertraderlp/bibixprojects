@@ -114,3 +114,64 @@ async function init() {
   });
 }
 init().catch(e => flash('Error: ' + e.message));
+
+// ── Quick answers manager ──────────────────────────────────────────────────────
+let qa = [], qaSel = null;
+const uid = () => Math.random().toString(36).slice(2, 10);
+const qaSave = () => send({ type: 'SET_QA', groups: qa }).catch(e => flash('Error: ' + e.message));
+
+function qaRender() {
+  if (!qa.find(g => g.id === qaSel)) qaSel = qa[0]?.id || null;
+  const gl = $('.qa-glist');
+  gl.innerHTML = qa.map(g => `<div class="qa-g ${g.id === qaSel ? 'active' : ''}" data-id="${g.id}">
+      <span class="n">${esc(g.name)}</span><span class="cnt">${g.items.length}</span>
+      <span class="act ren" title="Rename">✎</span><span class="act rm" title="Delete group">✕</span></div>`).join('') || '<div class="qa-empty">No groups yet.</div>';
+  const g = qa.find(x => x.id === qaSel);
+  const il = $('.qa-ilist');
+  $('#qa-add-item').disabled = !g;
+  il.innerHTML = !g ? '' : (g.items.map(it => `<div class="qa-i" data-id="${it.id}">
+      <input class="t" value="${esc(it.title)}" placeholder="Short title (shown in the list)" />
+      <button class="del" title="Delete answer">✕</button>
+      <textarea placeholder="The answer, in your language…">${esc(it.text)}</textarea></div>`).join('') || '<div class="qa-empty">No answers in this group yet — click “+ Answer”.</div>');
+}
+async function qaInit() {
+  qa = await send({ type: 'GET_QA' });
+  qaRender();
+  $('#qa-add-group').onclick = () => { const name = (prompt('Group name:') || '').trim(); if (!name) return; const g = { id: uid(), name, items: [] }; qa.push(g); qaSel = g.id; qaSave(); qaRender(); };
+  $('#qa-add-item').onclick = () => { const g = qa.find(x => x.id === qaSel); if (!g) return; g.items.push({ id: uid(), title: '', text: '' }); qaSave(); qaRender(); $('.qa-i:last-child input', $('.qa-ilist'))?.focus(); };
+  $('.qa-glist').addEventListener('click', (e) => {
+    const row = e.target.closest('.qa-g'); if (!row) return; const g = qa.find(x => x.id === row.dataset.id);
+    if (e.target.classList.contains('ren')) { const name = (prompt('Group name:', g.name) || '').trim(); if (name) { g.name = name; qaSave(); } }
+    else if (e.target.classList.contains('rm')) { if (confirm(`Delete group “${g.name}” and its ${g.items.length} answers?`)) { qa = qa.filter(x => x !== g); qaSave(); } }
+    else qaSel = g.id;
+    qaRender();
+  });
+  $('.qa-ilist').addEventListener('input', (e) => {
+    const row = e.target.closest('.qa-i'); if (!row) return; const g = qa.find(x => x.id === qaSel); const it = g?.items.find(i => i.id === row.dataset.id); if (!it) return;
+    if (e.target.classList.contains('t')) it.title = e.target.value; else if (e.target.tagName === 'TEXTAREA') it.text = e.target.value;
+    clearTimeout(qaInit._t); qaInit._t = setTimeout(() => { qaSave(); $(`.qa-g[data-id="${g.id}"] .cnt`).textContent = g.items.length; }, 400);
+  });
+  $('.qa-ilist').addEventListener('click', (e) => {
+    if (!e.target.classList.contains('del')) return;
+    const row = e.target.closest('.qa-i'); const g = qa.find(x => x.id === qaSel);
+    g.items = g.items.filter(i => i.id !== row.dataset.id); qaSave(); qaRender();
+  });
+  $('#qa-export').onclick = () => {
+    const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([JSON.stringify(qa, null, 2)], { type: 'application/json' }));
+    a.download = 'bibix-quick-answers.json'; a.click(); URL.revokeObjectURL(a.href);
+  };
+  $('#qa-import').onclick = () => $('#qa-file').click();
+  $('#qa-file').onchange = async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      const data = JSON.parse(await f.text());
+      if (!Array.isArray(data) || !data.every(g => g && typeof g.name === 'string' && Array.isArray(g.items))) throw new Error('Expected an array of { name, items:[{ title, text }] }');
+      for (const g of data) { g.id = g.id || uid(); for (const it of g.items) { it.id = it.id || uid(); it.title = String(it.title || ''); it.text = String(it.text || ''); } }
+      const mode = qa.length ? confirm('OK = add to existing groups, Cancel = replace everything') : true;
+      qa = mode ? [...qa, ...data] : data; qaSave(); qaRender(); flash('Imported ✓');
+    } catch (err) { flash('Import failed: ' + err.message); }
+    e.target.value = '';
+  };
+}
+qaInit().catch(e => flash('Error: ' + e.message));
+chrome.runtime.onMessage.addListener((msg) => { if (msg?.type === 'OPTIONS_GOTO' && msg.section) document.getElementById(msg.section)?.scrollIntoView({ behavior: 'smooth' }); });

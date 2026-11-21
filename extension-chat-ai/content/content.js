@@ -162,6 +162,7 @@
       <button class="bx-send bx-primary" title="Translate the draft and send (Ctrl/⌘+Shift+Enter)">Translate &amp; send</button>
       <button class="bx-inplace" title="Translate the draft in the box so you can review it (Ctrl/⌘+Shift+T)">Translate</button>
       <button class="bx-undo" title="Restore what you typed (Ctrl/⌘+Shift+U)" style="display:none">Undo</button>
+      <button class="bx-qa-btn" title="Quick answers (Ctrl/⌘+Shift+Q) — click: insert to edit · double-click: translate &amp; send">⚡ Quick</button>
       <label title="Translate incoming messages into my language"><input type="checkbox" class="bx-auto" /> Incoming → <span class="bx-mylang"></span></label>
       <button class="bx-now" title="Translate the visible incoming messages now">Translate visible</button>
       <span class="bx-status"></span>`;
@@ -184,6 +185,7 @@
     els.inplace.addEventListener('click', () => translateDraft(false));
     els.undo.addEventListener('click', undoDraft);
     els.now.addEventListener('click', () => scanIncoming(30, true));
+    $('.bx-qa-btn', bar).addEventListener('click', () => toggleQA());
     // Keep key events inside the bar from reaching the app's hotkeys.
     bar.addEventListener('keydown', e => e.stopPropagation());
     return bar;
@@ -365,6 +367,91 @@
     finally { inflight.delete(el); }
   }
 
+  // ── Quick answers panel ────────────────────────────────────────────────────
+  let qaGroups = null, qaPanel = null, qaSel = null, qaQuery = '', qaPending = null, qaCloseTimer = null, qaLastClick = { id: null, at: 0 };
+  // Close the panel when clicking elsewhere (registered once).
+  document.addEventListener('mousedown', (e) => { if (qaPanel && !qaPanel.contains(e.target) && !e.target.closest?.('.bx-qa-btn')) toggleQA(false); }, true);
+  async function loadQA() { try { qaGroups = await bg({ type: 'GET_QA' }); } catch (_) { qaGroups = []; } }
+  function toggleQA(force) {
+    const open = force ?? !(qaPanel && document.body.contains(qaPanel));
+    if (!open) { qaPanel?.remove(); qaPanel = null; return; }
+    (qaGroups ? Promise.resolve() : loadQA()).then(() => { renderQA(); positionQA(); $('.bx-qa-search', qaPanel)?.focus(); });
+  }
+  function positionQA() {
+    if (!qaPanel || !bar) return;
+    const r = bar.getBoundingClientRect();
+    qaPanel.style.left = Math.max(8, r.left + 8) + 'px';
+    qaPanel.style.bottom = Math.max(8, window.innerHeight - r.top + 6) + 'px';
+    qaPanel.style.width = Math.min(640, r.width - 16) + 'px';
+  }
+  function renderQA() {
+    if (!qaPanel) {
+      qaPanel = document.createElement('div'); qaPanel.className = 'bx-qa';
+      qaPanel.innerHTML = `
+        <div class="bx-qa-head"><input class="bx-qa-search" placeholder="Search quick answers… (Enter inserts the first match, Shift+Enter sends it)" /><span class="bx-act bx-qa-close" title="Close (Esc)">✕</span></div>
+        <div class="bx-qa-body"><div class="bx-qa-groups"></div><div class="bx-qa-list"></div></div>
+        <div class="bx-qa-foot"><span><b>Click</b>: put in the box to edit (Enter then translates &amp; sends) · <b>Double-click</b>: translate &amp; send now</span><a class="bx-qa-manage">Manage ↗</a></div>`;
+      document.body.appendChild(qaPanel);
+      qaPanel.addEventListener('keydown', (e) => {
+        e.stopPropagation();
+        if (e.key === 'Escape') { toggleQA(false); A.composer()?.focus(); }
+        if (e.key === 'Enter' && e.target.classList.contains('bx-qa-search')) { const first = qaVisibleItems()[0]; if (first) useQuickAnswer(first, e.shiftKey); }
+      });
+      $('.bx-qa-search', qaPanel).addEventListener('input', (e) => { qaQuery = e.target.value.toLowerCase().trim(); renderQA(); });
+      $('.bx-qa-close', qaPanel).addEventListener('click', () => toggleQA(false));
+      $('.bx-qa-manage', qaPanel).addEventListener('click', () => chrome.runtime.sendMessage({ type: 'OPEN_OPTIONS', section: 'quick-answers' }).catch(() => {}));
+      $('.bx-qa-groups', qaPanel).addEventListener('click', (e) => { const g = e.target.closest('[data-g]'); if (g) { qaSel = g.dataset.g; renderQA(); } });
+      // Click handling: we count clicks ourselves (WhatsApp swallows some dblclick events).
+      // 1st click → insert; 2nd click on the same answer within 600 ms, or the ➤ button → translate & send.
+      $('.bx-qa-list', qaPanel).addEventListener('click', (e) => {
+        const row = e.target.closest('[data-i]'); if (!row) return;
+        const item = findQA(row.dataset.i); if (!item) return;
+        const now = Date.now();
+        const second = e.target.closest('.bx-qa-send') || (qaLastClick.id === item.id && now - qaLastClick.at < 600);
+        qaLastClick = second ? { id: null, at: 0 } : { id: item.id, at: now };
+        if (second) { clearTimeout(qaCloseTimer); useQuickAnswer(item, true); }
+        else qaPending = useQuickAnswer(item, false);
+      });
+      $('.bx-qa-list', qaPanel).addEventListener('dblclick', (e) => { e.preventDefault(); e.stopPropagation(); });
+    }
+    const groups = qaGroups || [];
+    if (!groups.find(g => g.id === qaSel)) qaSel = groups[0]?.id || null;
+    $('.bx-qa-groups', qaPanel).innerHTML = groups.map(g => `<div class="bx-qa-g ${g.id === qaSel ? 'on' : ''}" data-g="${g.id}">${escHtml(g.name)} <small>${g.items.length}</small></div>`).join('')
+      || '<div class="bx-qa-empty">No quick answers yet.<br>Click “Manage” to create groups and answers.</div>';
+    const items = qaVisibleItems();
+    $('.bx-qa-list', qaPanel).innerHTML = items.map(it => `<div class="bx-qa-i" data-i="${it.id}"><div class="bx-qa-t">${escHtml(it.title || it.text.slice(0, 40))}${qaQuery ? ` <small>${escHtml(it._g)}</small>` : ''}</div><div class="bx-qa-x">${escHtml(it.text)}</div><span class="bx-qa-send" title="Translate & send now">➤</span></div>`).join('')
+      || `<div class="bx-qa-empty">${qaQuery ? 'No match.' : 'This group is empty.'}</div>`;
+  }
+  function qaVisibleItems() {
+    const groups = qaGroups || [];
+    if (qaQuery) return groups.flatMap(g => g.items.map(it => ({ ...it, _g: g.name }))).filter(it => (it.title + ' ' + it.text).toLowerCase().includes(qaQuery));
+    return (groups.find(g => g.id === qaSel)?.items || []).map(it => ({ ...it, _g: '' }));
+  }
+  function findQA(id) { for (const g of qaGroups || []) { const it = g.items.find(i => i.id === id); if (it) return it; } return null; }
+  function escHtml(s) { return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  async function useQuickAnswer(item, sendNow) {
+    const text = (item.text || '').trim(); if (!text) return;
+    console.info('[Bibix Chat AI] quick answer', { sendNow, title: item.title, enabled: S.enabled, my: S.myLanguage, to: targetLang() });
+    try {
+      if (!sendNow) {
+        // Keep the panel briefly so a double-click can still land on the row; then close it.
+        clearTimeout(qaCloseTimer); qaCloseTimer = setTimeout(() => toggleQA(false), 500);
+        await writeDraft(text);
+        A.composer()?.focus();
+        status(`Inserted “${item.title || text.slice(0, 30)}” — edit, then Enter sends it in ${targetLang()}`, 'ok');
+        return;
+      }
+      // Double-click: the first click already inserted the text (or is doing so) — wait for it,
+      // then translate what is in the box to the chat language and send it, same path as Enter.
+      try { await qaPending; } catch (_) {}
+      qaPending = null;
+      clearTimeout(qaCloseTimer); toggleQA(false);
+      if (!S.enabled) { status('Turn the toolbar on to translate', 'err'); return; }
+      if (norm(readDraft()) !== norm(text)) await writeDraft(text);
+      await translateDraft(true);
+    } catch (e) { status(e.message, 'err'); }
+  }
+
   // ── Right-click → Translate (any bubble, or just the selected text) ─────────
   let contextTarget = null;
   document.addEventListener('contextmenu', (e) => { contextTarget = e.target; }, true);
@@ -491,13 +578,26 @@
     if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); translateDraft(true); }
     else if (e.key.toLowerCase() === 't') { e.preventDefault(); e.stopPropagation(); translateDraft(false); }
     else if (e.key.toLowerCase() === 'u') { e.preventDefault(); e.stopPropagation(); undoDraft(); }
+    else if (e.key.toLowerCase() === 'q') { e.preventDefault(); e.stopPropagation(); toggleQA(); }
   }, true);
+  // WhatsApp's own send arrow: when the toolbar is on, route it through translate & send too,
+  // so a message can't leave untranslated whichever way it is sent.
+  document.addEventListener('click', (e) => {
+    if (!S?.enabled || S.enterTranslates === false || sendingNow) return;
+    const btn = A.sendButton(); if (!btn || !(btn === e.target || btn.contains(e.target))) return;
+    let draft = ''; try { draft = norm(readDraft()); } catch (_) { return; }
+    if (!draft) return;
+    e.preventDefault(); e.stopImmediatePropagation();
+    translateDraft(true);
+  }, true);
+  window.addEventListener('resize', positionQA);
 
   chrome.runtime.onMessage.addListener((msg, _s, reply) => {
     if (msg?.type === 'SETTINGS_CHANGED') { S = { ...S, ...msg.settings }; syncBar(); if (S.enabled && autoIncoming()) scanIncoming(S.initialIncoming); }
     if (msg?.type === 'GET_CHAT') reply({ chatKey, title: A.chatTitle().trim(), platform: A.id });
     if (msg?.type === 'TRANSLATE_VISIBLE') { scanIncoming(30, true); reply({ ok: true }); }
     if (msg?.type === 'CONTEXT_TRANSLATE') { contextTranslate(msg.selectionText); reply({ ok: true }); }
+    if (msg?.type === 'QA_CHANGED') { qaGroups = msg.groups; if (qaPanel && document.body.contains(qaPanel)) renderQA(); }
   });
 
   async function init() {

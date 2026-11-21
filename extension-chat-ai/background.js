@@ -15,6 +15,20 @@ async function setSettings(patch) {
   return next;
 }
 
+// ── Quick answers: [{ id, name, items: [{ id, title, text }] }] ───────────────
+const QA_SEED = [{
+  id: 'g1', name: 'General', items: [
+    { id: 'a1', title: 'Thanks', text: 'Thank you! I will get back to you shortly.' },
+    { id: 'a2', title: 'Busy now', text: 'I am in a meeting right now, can I call you back in a bit?' },
+    { id: 'a3', title: 'Send details', text: 'Sure. Could you send me the details so I can check and confirm?' },
+  ],
+}];
+async function getQuickAnswers() {
+  const { quickAnswers } = await chrome.storage.local.get('quickAnswers');
+  if (!Array.isArray(quickAnswers)) { await chrome.storage.local.set({ quickAnswers: QA_SEED }); return QA_SEED; }
+  return quickAnswers;
+}
+
 // ── Prompt ─────────────────────────────────────────────────────────────────────
 function buildSystemPrompt({ from, to, style, detect }) {
   return [
@@ -172,7 +186,9 @@ const handlers = {
   GET_SETTINGS: () => getSettings(),
   SET_SETTINGS: ({ patch }) => setSettings(patch),
   GET_META: () => ({ providers: BX_PROVIDERS, languages: BX_LANGUAGES }),
-  OPEN_OPTIONS: () => chrome.runtime.openOptionsPage(),
+  OPEN_OPTIONS: ({ section } = {}) => chrome.runtime.openOptionsPage().then(() => section && setTimeout(() => chrome.runtime.sendMessage({ type: 'OPTIONS_GOTO', section }).catch(() => {}), 300)),
+  GET_QA: () => getQuickAnswers(),
+  SET_QA: ({ groups }) => chrome.storage.local.set({ quickAnswers: groups }).then(() => groups),
   TRANSLATE: (msg) => translate(msg),
   TEST_PROVIDER: async ({ providerId }) => {
     const out = await translate({ text: 'Hello! How are you today?', from: 'English', to: 'Spanish', providerId });
@@ -196,9 +212,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
 
 // Broadcast settings changes to open chat tabs so the toolbar updates live.
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || !changes.settings) return;
+  if (area !== 'local') return;
   chrome.tabs.query({ url: ['https://web.whatsapp.com/*', 'https://web.telegram.org/*'] }, tabs => {
-    for (const t of tabs) chrome.tabs.sendMessage(t.id, { type: 'SETTINGS_CHANGED', settings: changes.settings.newValue }).catch(() => {});
+    for (const t of tabs) {
+      if (changes.settings) chrome.tabs.sendMessage(t.id, { type: 'SETTINGS_CHANGED', settings: changes.settings.newValue }).catch(() => {});
+      if (changes.quickAnswers) chrome.tabs.sendMessage(t.id, { type: 'QA_CHANGED', groups: changes.quickAnswers.newValue }).catch(() => {});
+    }
   });
 });
 

@@ -3,7 +3,11 @@
 A standalone Chrome extension (Manifest V3) that adds an AI toolbar to **WhatsApp Web**
 and **Telegram Web** (both the `/k/` and `/a/` clients).
 
-**Feature 1 — live translation**
+**Features**
+- Live translation (below), per-chat language memory with auto-detection, on-demand translation of any bubble (hover 🌐).
+- Quick answers: groups of canned replies, inserted to edit or translated-and-sent with a double-click.
+
+**Live translation**
 - Type in your language → the draft is translated into the chat's language and sent.
 - Incoming messages get an inline translation (into your language) under each bubble.
 - Under your own sent bubbles you can see what you originally typed.
@@ -31,6 +35,7 @@ and are sent only to the chosen provider, from the background worker.
 | Translate one message on demand | Hover a bubble and click the **🌐** icon at the end of its text (any bubble, incoming or outgoing, older ones too; click again to hide). Chrome's right-click menu also has **Translate this message** / **Translate selected text**, but WhatsApp/Telegram replace the native menu on bubbles — hold **Shift** while right-clicking to get Chrome's menu |
 | Incoming translations | Tick **Incoming → <my language>**. New messages are translated as they arrive; on opening a chat the last N (default 15, see settings) are translated |
 | Translate older messages | **Translate visible** (also in the popup) |
+| Quick answers | **⚡ Quick** in the toolbar (or `Ctrl/⌘+Shift+Q`). Groups on the left, answers on the right, search box on top. **Click** an answer: it goes into the message box in your language so you can edit; Enter then translates & sends. **Double-click**: translated to the chat's language and sent immediately. Manage groups/answers (and import/export JSON) in settings → Quick answers |
 | Pause everything | The toggle in the toolbar or the popup |
 
 Settings → **Style instructions** lets you steer tone ("informal, use tú", "business formal", "short").
@@ -66,4 +71,4 @@ Add one entry to `BX_PROVIDERS` in `providers.js`. Anything with a `/chat/comple
   message text element; voice notes/images without text are skipped.
 
 ## Roadmap (next functionalities)
-Reply suggestions / draft with AI, summarize a long chat, tone rewrite, canned answers, auto-reply rules.
+Reply suggestions / draft with AI, summarize a long chat, tone rewrite, auto-reply rules, sync quick answers with a Bibix board.
