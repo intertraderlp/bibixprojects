@@ -73,6 +73,9 @@ app.use('/api/contacts',       require('./routes/contacts'));
 app.use('/api/outreach',       require('./routes/outreach'));
 app.use('/api/ai',             require('./routes/ai'));
 app.use('/api/scraper',        require('./routes/scraper'));
+const chatsRouter = require('./routes/chats');
+app.use('/api/chats',          chatsRouter);
+try { chatsRouter.boot(); } catch (e) { console.warn('[chats] boot failed:', e.message); }
 
 // Start Telegram bot (only if TELEGRAM_BOT_TOKEN is set)
 const tgBot = require('./bot/telegram');
@@ -170,6 +173,11 @@ app.use((err, req, res, _next) => {
 const PWA_DIR = path.join(__dirname, '../../pwa');
 app.use('/app', express.static(PWA_DIR));
 app.get('/app', (req, res) => res.redirect('/app/'));
+
+// ── Serve the Chats PWA (WhatsApp linked device + AI translation) ─────────────
+const CHATS_DIR = path.join(__dirname, '../../chats');
+app.use('/chats', express.static(CHATS_DIR, { setHeaders: (res, p) => { if (/\/(index\.html|sw\.js|app\.js|manifest\.json)$/.test(p)) res.setHeader('Cache-Control', 'no-cache'); } }));
+app.get('/chats', (req, res) => res.redirect('/chats/'));
 
 // ── Serve built React frontend in production ──────────────────────────────────
 const FRONTEND_DIST = path.join(__dirname, '../public');

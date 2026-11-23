@@ -27,4 +27,9 @@ function emit(userId, event, data = {}) {
   }
 }
 
-module.exports = { addClient, removeClient, emit };
+function hasClients(userId) {
+  const set = clients.get(userId);
+  return !!(set && set.size > 0);
+}
+
+module.exports = { addClient, removeClient, emit, hasClients };

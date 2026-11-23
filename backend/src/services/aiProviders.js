@@ -110,7 +110,10 @@ function getProviderConfig(id) {
 
 // ── OpenAI-compatible chat completions ──────────────────────────────────────
 // Used for: openai, groq, grok, perplexity, z_ai, mistral, deepseek.
-async function callOpenAICompat(baseUrl, apiKey, model, prompt, maxTokens) {
+async function callOpenAICompat(baseUrl, apiKey, model, prompt, maxTokens, opts = {}) {
+  const messages = [];
+  if (opts.system) messages.push({ role: 'system', content: opts.system });
+  messages.push({ role: 'user', content: prompt });
   const r = await fetchFn(`${baseUrl}/chat/completions`, {
     method: 'POST',
     headers: {
@@ -120,7 +123,10 @@ async function callOpenAICompat(baseUrl, apiKey, model, prompt, maxTokens) {
     body: JSON.stringify({
       model,
       max_tokens: maxTokens || 250,
-      messages: [{ role: 'user', content: prompt }],
+      messages,
+      ...(opts.temperature != null ? { temperature: opts.temperature } : {}),
+      // Reasoning models (GPT-OSS on Groq) think before answering; translation needs little of it.
+      ...(/gpt-oss/.test(model) && /groq\.com/.test(baseUrl) ? { reasoning_effort: 'low' } : {}),
     }),
   });
   if (!r.ok) {
@@ -132,7 +138,7 @@ async function callOpenAICompat(baseUrl, apiKey, model, prompt, maxTokens) {
 }
 
 // ── Anthropic Claude /v1/messages ───────────────────────────────────────────
-async function callAnthropic(baseUrl, apiKey, model, prompt, maxTokens) {
+async function callAnthropic(baseUrl, apiKey, model, prompt, maxTokens, opts = {}) {
   const r = await fetchFn(`${baseUrl}/messages`, {
     method: 'POST',
     headers: {
@@ -143,6 +149,8 @@ async function callAnthropic(baseUrl, apiKey, model, prompt, maxTokens) {
     body: JSON.stringify({
       model,
       max_tokens: maxTokens || 250,
+      ...(opts.system ? { system: opts.system } : {}),
+      ...(opts.temperature != null ? { temperature: opts.temperature } : {}),
       messages: [{ role: 'user', content: prompt }],
     }),
   });
@@ -161,15 +169,16 @@ async function callAnthropic(baseUrl, apiKey, model, prompt, maxTokens) {
 }
 
 // ── Google Gemini /v1beta/models/MODEL:generateContent ──────────────────────
-async function callGemini(baseUrl, apiKey, model, prompt, maxTokens) {
+async function callGemini(baseUrl, apiKey, model, prompt, maxTokens, opts = {}) {
   // Gemini uses an API key query param, not a Bearer header.
   const url = `${baseUrl}/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`;
   const r = await fetchFn(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { maxOutputTokens: maxTokens || 250 },
+      ...(opts.system ? { systemInstruction: { parts: [{ text: opts.system }] } } : {}),
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      generationConfig: { maxOutputTokens: maxTokens || 250, ...(opts.temperature != null ? { temperature: opts.temperature } : {}) },
     }),
   });
   if (!r.ok) {
@@ -195,15 +204,17 @@ async function generateText(provider, apiKey, opts) {
   const maxTokens = opts?.max_tokens || 250;
   const prompt = opts?.prompt || '';
   if (!prompt) throw new Error('prompt required');
+  // Optional: `system` (system prompt) and `temperature` — used by the Chats translator.
+  const extra = { system: opts?.system || null, temperature: opts?.temperature };
 
   if (cfg.style === 'openai') {
-    return await callOpenAICompat(baseUrl, apiKey, model, prompt, maxTokens);
+    return await callOpenAICompat(baseUrl, apiKey, model, prompt, maxTokens, extra);
   }
   if (cfg.style === 'anthropic') {
-    return await callAnthropic(baseUrl, apiKey, model, prompt, maxTokens);
+    return await callAnthropic(baseUrl, apiKey, model, prompt, maxTokens, extra);
   }
   if (cfg.style === 'gemini') {
-    return await callGemini(baseUrl, apiKey, model, prompt, maxTokens);
+    return await callGemini(baseUrl, apiKey, model, prompt, maxTokens, extra);
   }
   throw new Error(`Unsupported style: ${cfg.style}`);
 }
