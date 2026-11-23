@@ -1,6 +1,6 @@
 export type UserRole = 'super_admin' | 'admin' | 'user' | 'readonly';
 
-export type AppModule = 'boards' | 'calendar' | 'bibixbot' | 'scheduling' | 'crm' | 'instagram' | 'linkedin' | 'marketing' | 'invoices' | 'extensions';
+export type AppModule = 'boards' | 'calendar' | 'bibixbot' | 'scheduling' | 'crm' | 'instagram' | 'linkedin' | 'marketing' | 'invoices' | 'extensions' | 'chats';
 
 export interface User {
   id: string;
