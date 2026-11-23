@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Plus, ChevronDown, ChevronRight, LayoutGrid, Bell, Search, Settings, LogOut, Home, Trash2, Users, Shield, Calendar, Bot, CalendarDays, ContactRound, FileText, Megaphone, Instagram, Linkedin, Database, Pencil, Check, X, BarChart3, PlugZap } from 'lucide-react';
+import { Plus, ChevronDown, ChevronRight, LayoutGrid, Bell, Search, Settings, LogOut, Home, Trash2, Users, Shield, Calendar, Bot, CalendarDays, ContactRound, FileText, Megaphone, Instagram, Linkedin, Database, Pencil, Check, X, BarChart3, PlugZap, MessageCircle } from 'lucide-react';
 import { useWorkspaceStore } from '../../store/workspaceStore';
 import { useAuthStore } from '../../store/authStore';
 import Avatar from '../ui/Avatar';
@@ -92,6 +92,12 @@ export default function Sidebar() {
           <Link to="/bi" className="flex items-center gap-3 px-4 py-2.5 text-white/70 hover:text-white hover:bg-monday-sidebar-hover rounded-lg mx-2 text-sm">
             <BarChart3 size={16} /> Reports & BI
           </Link>
+        )}
+        {hasPermission('chats') && (
+          /* Chats is a standalone installable PWA served at /chats/ (own manifest + service worker) */
+          <a href="/chats/" className="flex items-center gap-3 px-4 py-2.5 text-white/70 hover:text-white hover:bg-monday-sidebar-hover rounded-lg mx-2 text-sm">
+            <MessageCircle size={16} /> Chats
+          </a>
         )}
         {hasPermission('marketing') && (
           <div>

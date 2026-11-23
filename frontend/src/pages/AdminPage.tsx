@@ -25,6 +25,7 @@ const MODULES: { id: AppModule; label: string; description: string; emoji: strin
   { id: 'invoices',   label: 'Invoices',             description: 'Create and manage invoices',      emoji: '🧾' },
   { id: 'reports',    label: 'Reports & BI',         description: 'Dashboards from Google Sheets',   emoji: '📊' },
   { id: 'marketing',  label: 'Marketing',            description: 'Social media and campaigns',      emoji: '📣' },
+  { id: 'chats',      label: 'Chats',                description: 'WhatsApp with AI translation (PWA)', emoji: '💬' },
 ];
 
 // Sub-modules nested under "marketing" → toggleable when marketing is on.
