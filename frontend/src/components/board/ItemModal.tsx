@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { X, Send, Trash2, Clock, Paperclip, FileText, Download, Image } from 'lucide-react';
+import { X, Send, Trash2, Clock, Paperclip, FileText, Download, Image, Bell, Plus } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import api from '../../api/client';
 import { useBoardStore } from '../../store/boardStore';
@@ -51,6 +51,68 @@ function AttachmentPreview({ att, onDelete, canDelete }: { att: Attachment; onDe
             <Trash2 size={12} />
           </button>
         )}
+      </div>
+    </div>
+  );
+}
+
+interface Reminder { id: string; remind_at: string; note: string | null; done: boolean }
+
+function RemindersSection({ itemId }: { itemId: string }) {
+  const [list, setList] = useState<Reminder[]>([]);
+  const [when, setWhen] = useState('');
+  const [note, setNote] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(() => {
+    api.get(`/reminders/item/${itemId}`).then(r => setList(r.data)).catch(() => {});
+  }, [itemId]);
+  useEffect(() => { load(); }, [load]);
+
+  const add = async () => {
+    if (!when) return;
+    setSaving(true);
+    try {
+      await api.post('/reminders', { item_id: itemId, remind_at: when, note: note.trim() || undefined });
+      setWhen(''); setNote('');
+      load();
+      window.dispatchEvent(new Event('reminders:changed'));
+    } finally { setSaving(false); }
+  };
+  const remove = async (id: string) => {
+    await api.delete(`/reminders/${id}`);
+    setList(l => l.filter(x => x.id !== id));
+    window.dispatchEvent(new Event('reminders:changed'));
+  };
+
+  return (
+    <div className="p-6 border-b border-gray-100">
+      <div className="flex items-center gap-2 mb-3">
+        <Bell size={14} className="text-gray-400" />
+        <span className="text-sm font-semibold text-gray-700">Reminders</span>
+      </div>
+      {list.length > 0 && (
+        <div className="space-y-1.5 mb-3">
+          {list.map(r => (
+            <div key={r.id} className={`flex items-center gap-2 text-sm rounded-lg px-3 py-2 ${r.done ? 'bg-gray-50 text-gray-400 line-through' : 'bg-blue-50 text-gray-700'}`}>
+              <Clock size={13} className="flex-shrink-0 text-monday-blue" />
+              <span className="flex-shrink-0">{format(parseISO(r.remind_at), 'EEE, MMM d · h:mm a')}</span>
+              {r.note && <span className="text-gray-500 truncate">— {r.note}</span>}
+              <button onClick={() => remove(r.id)} className="ml-auto text-gray-300 hover:text-red-500 flex-shrink-0"><Trash2 size={13} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <input type="datetime-local" value={when} onChange={e => setWhen(e.target.value)}
+          className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-monday-blue" />
+        <input value={note} onChange={e => setNote(e.target.value)} placeholder="Note (optional)"
+          onKeyDown={e => { if (e.key === 'Enter') add(); }}
+          className="flex-1 min-w-[140px] border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-monday-blue" />
+        <button onClick={add} disabled={!when || saving}
+          className="flex items-center gap-1.5 px-3 py-1.5 bg-monday-blue text-white text-sm rounded-lg hover:bg-blue-600 disabled:opacity-50">
+          <Plus size={14} /> Add
+        </button>
       </div>
     </div>
   );
@@ -168,6 +230,9 @@ export default function ItemModal({ item, onClose }: Props) {
               ))}
             </div>
           </div>
+
+          {/* Reminders */}
+          <RemindersSection itemId={item.id} />
 
           {/* Updates */}
           <div className="p-6">

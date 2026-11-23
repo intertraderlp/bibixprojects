@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { useSearchParams } from 'react-router-dom';
 import {
   DndContext, DragOverlay, closestCorners, PointerSensor, KeyboardSensor,
   useSensor, useSensors, DragStartEvent, DragOverEvent, DragEndEvent,
@@ -513,6 +514,21 @@ export default function TableView() {
   };
 
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
+
+  // Deep-link: open a specific task when arriving via ?item=<id> (e.g. from a reminder).
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const itemId = searchParams.get('item');
+    if (!itemId || !board) return;
+    const found = board.items.find(i => i.id === itemId);
+    if (found) {
+      setSelectedItem(found);
+      const next = new URLSearchParams(searchParams);
+      next.delete('item');
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, board, setSearchParams]);
+
   const [showAddCol, setShowAddCol] = useState(false);
   const [settingsCol, setSettingsCol] = useState<Column | null>(null);
   const [newItemGroup, setNewItemGroup] = useState<string | null>(null);
