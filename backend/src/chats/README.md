@@ -62,6 +62,12 @@ open http://localhost:3001/chats/
 No extra env is needed in dev. Put at least one AI key in Bibix settings (or `GROQ_API_KEY` in `.env`).
 
 ## Deploying (NameHero / LiteSpeed lsnode) — use the worker
+
+**One-liner (cPanel terminal, production):** after `main` is pushed,
+```
+git -C ~/bibixprojects fetch origin main && git -C ~/bibixprojects show FETCH_HEAD:backend/scripts/chats-deploy.sh > /tmp/chats-deploy.sh && bash /tmp/chats-deploy.sh
+```
+`backend/scripts/chats-deploy.sh` does steps 1–5 below (fast-forward, npm install, env, worker + cron, app restart) and prints health checks. For staging prefix it with `ROOT=$HOME/bibixprojects-staging APP_URL=https://staging.bibix.ailabstech.com BRANCH=staging WORKER_PORT=3003`. The manual steps:
 Baileys needs **one long-lived Node process** holding the WebSocket to WhatsApp. On LiteSpeed the
 web app runs as `lsnode:` workers that are killed on idle, restarted on deploy and **duplicated**
 when the event loop blocks (see the lsnode notes in the deployment memory). Two processes holding
