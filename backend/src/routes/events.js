@@ -4,9 +4,9 @@
 const express   = require('express');
 const jwt       = require('jsonwebtoken');
 const { addClient, removeClient } = require('../sse');
+const { JWT_SECRET } = require('../middleware/auth'); // same fallback secret as the rest of the API
 
 const router = express.Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'secret';
 
 router.get('/', (req, res) => {
   // Auth via query param (EventSource limitation)

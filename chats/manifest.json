@@ -1,0 +1,17 @@
+{
+  "name": "Bibix Chats",
+  "short_name": "Chats",
+  "description": "WhatsApp with built-in AI translation",
+  "id": "/chats/",
+  "start_url": "/chats/",
+  "scope": "/chats/",
+  "display": "standalone",
+  "background_color": "#f0f7f5",
+  "theme_color": "#0f9d8a",
+  "orientation": "portrait",
+  "icons": [
+    { "src": "/chats/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "/chats/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
+    { "src": "/chats/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}

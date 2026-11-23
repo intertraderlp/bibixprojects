@@ -9,7 +9,9 @@
   },
   "dependencies": {
     "@azure/msal-node": "^5.1.4",
+    "@hapi/boom": "^10.0.1",
     "@microsoft/microsoft-graph-client": "^3.0.7",
+    "@whiskeysockets/baileys": "^7.0.0-rc14",
     "bcryptjs": "^2.4.3",
     "cors": "^2.8.5",
     "dotenv": "^17.4.2",
@@ -22,6 +24,8 @@
     "node-sqlite3-wasm": "^0.8.0",
     "node-telegram-bot-api": "^0.67.0",
     "openai": "^6.34.0",
+    "pino": "^10.4.0",
+    "qrcode": "^1.5.4",
     "uuid": "^9.0.1",
     "web-push": "^3.6.7",
     "xlsx": "^0.18.5"
