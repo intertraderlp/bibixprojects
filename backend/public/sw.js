@@ -26,7 +26,9 @@ self.addEventListener('push', e => {
 
 self.addEventListener('notificationclick', e => {
   e.notification.close();
-  const url = e.notification.data?.link ? ('/' + e.notification.data.link).replace('//', '/') : '/';
+  const d = e.notification.data || {};
+  // Chats pushes carry a full url (/chats/?account=…&chat=…); open it inside the app shell at /chats
+  const url = d.url ? d.url.replace(/^\/chats\/\?/, '/chats?') : d.link ? ('/' + d.link).replace('//', '/') : '/';
   e.waitUntil(
     clients.matchAll({ type: 'window', includeUncontrolled: true }).then(cls => {
       const existing = cls.find(c => c.url.includes(self.location.origin));

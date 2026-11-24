@@ -26,6 +26,7 @@ const MarketingPage = lazy(() => import('./pages/MarketingPage'));
 const LinkedInPage = lazy(() => import('./pages/LinkedInPage'));
 const BackupsPage = lazy(() => import('./pages/BackupsPage'));
 const ReportsPage = lazy(() => import('./pages/ReportsPage'));
+const ChatsPage = lazy(() => import('./pages/ChatsPage'));
 
 function PageLoader() {
   return (
@@ -110,6 +111,7 @@ export default function App() {
         <Route path="crm" element={<ModuleRoute module="crm">{S(<CRMPage />)}</ModuleRoute>} />
         <Route path="invoices" element={S(<InvoicePage />)} />
         <Route path="bi" element={<ModuleRoute module="reports">{S(<ReportsPage />)}</ModuleRoute>} />
+        <Route path="chats" element={<ModuleRoute module="chats">{S(<ChatsPage />)}</ModuleRoute>} />
         <Route path="instagram" element={<Navigate to="/marketing/instagram" replace />} />
         <Route path="marketing/integrations" element={<ModuleRoute module="marketing">{S(<MarketingPage />)}</ModuleRoute>} />
         <Route path="marketing/instagram" element={<ModuleRoute module="instagram">{S(<InstagramPage />)}</ModuleRoute>} />
