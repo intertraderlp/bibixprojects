@@ -108,6 +108,34 @@ addColumn('chat_messages', 'media', 'TEXT');
 
 const now = () => Date.now();
 
+// LID-keyed duplicates: merge a "<x>@lid" chat into its phone-number chat (when the mapping is known) or
+// drop it when it holds nothing. Runs at boot and whenever a lid→pn mapping arrives.
+function mergeLidChat(accountId, lid, pn) {
+  const dup = db.prepare('SELECT id FROM chat_chats WHERE account_id = ? AND jid = ?').get(accountId, lid);
+  if (!dup) return false;
+  if (pn) {
+    ensureChat(accountId, pn, 0);
+    db.prepare('UPDATE OR IGNORE chat_messages SET chat_jid = ? WHERE account_id = ? AND chat_jid = ?').run(pn, accountId, lid);
+    db.prepare('DELETE FROM chat_messages WHERE account_id = ? AND chat_jid = ?').run(accountId, lid);
+    const d = db.prepare('SELECT unread_count FROM chat_chats WHERE account_id = ? AND jid = ?').get(accountId, lid);
+    if (d?.unread_count) db.prepare('UPDATE chat_chats SET unread_count = unread_count + ? WHERE account_id = ? AND jid = ?').run(d.unread_count, accountId, pn);
+    db.prepare('DELETE FROM chat_chats WHERE account_id = ? AND jid = ?').run(accountId, lid);
+    return true;
+  }
+  const n = db.prepare('SELECT COUNT(*) AS n FROM chat_messages WHERE account_id = ? AND chat_jid = ?').get(accountId, lid).n;
+  if (!n) { db.prepare('DELETE FROM chat_chats WHERE account_id = ? AND jid = ?').run(accountId, lid); return true; }
+  return false;
+}
+function cleanupLidChats() {
+  let fixed = 0;
+  for (const r of db.prepare(`SELECT account_id, jid FROM chat_chats WHERE jid LIKE '%@lid'`).all()) {
+    const c = db.prepare('SELECT jid FROM chat_contacts WHERE account_id = ? AND lid = ?').get(r.account_id, r.jid);
+    if (mergeLidChat(r.account_id, r.jid, c?.jid || null)) fixed++;
+  }
+  if (fixed) console.log(`[chats] merged/removed ${fixed} LID duplicate chat(s)`);
+}
+try { cleanupLidChats(); } catch (e) { console.warn('[chats] lid cleanup failed:', e.message); }
+
 // ── accounts ─────────────────────────────────────────────────────────────────
 function listAccounts(userId) {
   return db.prepare('SELECT * FROM chat_accounts WHERE user_id = ? ORDER BY created_at').all(userId);
@@ -151,7 +179,7 @@ function shapeChat(r) {
   const phone = /^(\d+)@s\.whatsapp\.net$/.exec(r.jid)?.[1] || null;
   return {
     id: r.id, account_id: r.account_id, jid: r.jid, is_group: !!r.is_group,
-    name: r.name || r.contact_name || r.contact_notify || (phone ? '+' + phone : r.jid.replace(/@.*/, '')),
+    name: (r.name && !/[•·]{2,}/.test(r.name) ? r.name : null) || r.contact_name || r.contact_notify || (phone ? '+' + phone : r.jid.replace(/@.*/, '')),
     phone, unread_count: r.unread_count || 0, last_message_at: r.last_message_at, last_message_text: r.last_message_text, last_message_from_me: !!r.last_message_from_me,
     archived: !!r.archived, pinned: !!r.pinned, muted: !!r.muted,
     send_language: r.send_language || null, send_language_detected: !!r.send_language_detected, auto_incoming: r.auto_incoming == null ? null : !!r.auto_incoming,
@@ -339,5 +367,5 @@ module.exports = {
   upsertContacts, listChats, getChat, ensureChat, upsertChats, updateChatPrefs, recentLanguages, setUnread, totalUnread,
   upsertMessage, updateMessage, setTranslation, getMessage, getMessageByMsgId, listMessages, untranslatedIncoming, unreadIncomingIds, markOutgoingRead, mediaRaw, setMediaLocal,
   getSettings, setSettings, getQuickAnswers, setQuickAnswers, DEFAULT_SETTINGS, transaction,
-  listStickers, addSticker, getSticker, deleteSticker,
+  listStickers, addSticker, getSticker, deleteSticker, mergeLidChat, cleanupLidChats,
 };
