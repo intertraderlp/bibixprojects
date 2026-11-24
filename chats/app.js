@@ -1,4 +1,4 @@
-// Bibix Chats — PWA client. WhatsApp (linked device via the backend) + AI translation.
+// Bibix Chats — PWA client. WhatsApp (linked device) + Telegram (MTProto) via the backend, with AI translation.
 // The translation UX mirrors the Chrome extension (extension-chat-ai/content/content.js):
 // "Send in <language>" per chat with memory + auto-detection, Translate & send / Translate (review) /
 // Send as typed, incoming translated inline, 🌐 on any bubble, "you wrote" under sent bubbles, Quick answers.
@@ -16,7 +16,11 @@
     chats: new Map(), jid: null, messages: [], oldestTs: null, qa: null, sse: null,
     enabled: localStorage.getItem('chats_enabled') !== '0', lastDraft: null, tab: 0, search: '',
     trState: new Map(), hiddenTr: new Set(), linkPoll: null, typingTimer: null, pushReady: false,
+    replyTo: null, menuMsg: null, fwdMsg: null, fwdSel: new Set(), fwdChats: [], embed: new URLSearchParams(location.search).get('embed') === '1',
   };
+  if (S.embed) document.body.classList.add('embed');
+  const PF = { whatsapp: { icon: '💬', name: 'WhatsApp' }, telegram: { icon: '✈️', name: 'Telegram' } };
+  const platform = () => S.account?.platform || 'whatsapp';
 
   // ── API ────────────────────────────────────────────────────────────────────
   async function api(path, opts = {}) {
@@ -74,7 +78,7 @@
     const url = new URL(location.href);
     const wanted = url.searchParams.get('account');
     S.account = S.accounts.find(a => a.id === wanted) || S.accounts.find(a => a.status === 'open') || S.accounts[0] || null;
-    if (!S.account) { renderBanner(); renderChatList(); openLinkModal(); return; }
+    if (!S.account) { renderBanner(); renderChatList(); openLinkModal({ choose: true }); return; }
     $('#account-select').value = S.account.id; renderBanner();
     await loadChats();
     const chat = url.searchParams.get('chat');
@@ -89,17 +93,19 @@
     if (S.account) sel.value = S.account.id;
     renderBanner();
   }
-  function accountLabel(a) { return (a.label || a.display_name || (a.phone ? '+' + a.phone : 'WhatsApp')) + (a.platform === 'whatsapp' ? '' : ' (' + a.platform + ')'); }
+  function accountLabel(a) { const pf = PF[a.platform] || { icon: '', name: a.platform }; return pf.icon + ' ' + (a.label || a.display_name || (a.phone ? '+' + String(a.phone).replace(/^\+/, '') : pf.name)); }
   function renderBanner() {
     const b = $('#account-banner'); const a = S.account;
     b.className = 'banner hidden';
-    if (!a) { b.className = 'banner'; b.innerHTML = 'No WhatsApp linked yet. <button id="banner-link">Link WhatsApp</button>'; $('#banner-link').onclick = openLinkModal; return; }
+    if (!a) { b.className = 'banner'; b.innerHTML = 'No account linked yet. <button id="banner-link">Add WhatsApp or Telegram</button>'; $('#banner-link').onclick = () => openLinkModal({ choose: true }); return; }
     const st = a.live?.status || a.status;
     if (st === 'open') return;
+    const pf = (PF[a.platform] || PF.whatsapp).name;
     b.className = 'banner' + (st === 'logged_out' || st === 'replaced' ? ' err' : '');
-    const txt = { qr: 'Waiting for the QR scan…', connecting: 'Connecting to WhatsApp…', stopped: 'Disconnected.', logged_out: 'This device was logged out on the phone.', replaced: 'Session opened elsewhere (another worker?).', unlinked: 'Not linked yet.', starting: 'Starting…' }[st] || ('Status: ' + st);
-    b.innerHTML = esc(txt) + ' <button id="banner-link">' + (st === 'qr' || st === 'unlinked' || st === 'logged_out' ? 'Link' : 'Reconnect') + '</button>' + (a.status_reason ? ' <small class="muted">' + esc(a.status_reason) + '</small>' : '');
-    $('#banner-link').onclick = () => (st === 'stopped' || st === 'replaced' || st === 'connecting') ? relink() : openLinkModal();
+    const txt = { qr: 'Waiting for the QR scan…', connecting: 'Connecting to ' + pf + '…', stopped: 'Disconnected.', logged_out: 'This device was logged out on the phone.', replaced: 'Session opened elsewhere (another worker?).', unlinked: 'Not linked yet.', starting: 'Starting…', phone: 'Telegram: phone number needed.', code: 'Telegram: waiting for the login code.', password: 'Telegram: password needed.' }[st] || ('Status: ' + st);
+    const finishing = st === 'phone' || st === 'code' || st === 'password';
+    b.innerHTML = esc(txt) + ' <button id="banner-link">' + (finishing ? 'Finish linking' : st === 'qr' || st === 'unlinked' || st === 'logged_out' ? 'Link' : 'Reconnect') + '</button>' + (a.status_reason ? ' <small class="muted">' + esc(a.status_reason) + '</small>' : '');
+    $('#banner-link').onclick = () => (st === 'stopped' || st === 'replaced' || st === 'connecting') ? relink() : openLinkModal({ account: a });
   }
   async function relink() {
     try { await api(`/chats/accounts/${S.account.id}/link`, { body: {} }); toast('Reconnecting…'); } catch (e) { toast(e.message, 5000); }
@@ -108,39 +114,53 @@
     S.account = S.accounts.find(a => a.id === $('#account-select').value) || null;
     S.jid = null; closeThread(); renderBanner(); await loadChats();
   });
-  $('#btn-add-account').addEventListener('click', () => openLinkModal(true));
+  $('#btn-add-account').addEventListener('click', () => openLinkModal({ choose: true }));
 
-  // ── Link modal ─────────────────────────────────────────────────────────────
+  // ── Add / link account modal ───────────────────────────────────────────────
   let linking = null; // account being linked
-  async function openLinkModal(forceNew) {
+  // openLinkModal({ choose }) → platform chooser; ({ platform }) → new account of that platform; ({ account }) → continue that one
+  async function openLinkModal(o = {}) {
+    if (o === true) o = { choose: true };
     $('#m-link').classList.remove('hidden');
-    $('#link-qr').innerHTML = '<div class="spinner"></div>'; $('#link-code').classList.add('hidden'); $('#link-status').textContent = 'Starting…';
+    $('#link-choose').classList.toggle('hidden', !o.choose);
+    $('#link-wa').classList.add('hidden'); $('#link-tg').classList.add('hidden');
+    $('#link-title').textContent = 'Add an account';
+    if (o.choose) return;
     try {
-      linking = (!forceNew && S.account && S.account.status !== 'open') ? S.account : null;
+      linking = o.account || null;
+      if (!linking && !o.platform && S.account && S.account.status !== 'open') linking = S.account;
+      const pf = linking?.platform || o.platform || 'whatsapp';
       if (!linking) {
-        const reusable = S.accounts.find(a => a.status !== 'open' && a.status !== 'connecting');
-        linking = (!forceNew && reusable) || await api('/chats/accounts', { body: { platform: 'whatsapp' } });
-        if (!S.accounts.find(a => a.id === linking.id)) S.accounts.push(linking);
-        renderAccounts();
+        linking = await api('/chats/accounts', { body: { platform: pf } });
+        S.accounts.push(linking); renderAccounts();
       }
+      $('#link-title').textContent = pf === 'telegram' ? 'Link Telegram' : 'Link WhatsApp';
+      if (pf === 'telegram') return openTelegramLink();
+      $('#link-wa').classList.remove('hidden');
+      $('#link-qr').innerHTML = '<div class="spinner"></div>'; $('#link-code').classList.add('hidden'); $('#link-status').textContent = 'Starting…';
       const st = await api(`/chats/accounts/${linking.id}/link`, { body: {} });
       applyLinkStatus(st);
-      clearInterval(S.linkPoll);
-      S.linkPoll = setInterval(async () => { if ($('#m-link').classList.contains('hidden')) return clearInterval(S.linkPoll); try { applyLinkStatus(await api(`/chats/accounts/${linking.id}/status`)); } catch (_) {} }, 3000);
-    } catch (e) { $('#link-status').textContent = e.message; }
+      pollLink();
+    } catch (e) { toast(e.message, 6000); $('#link-status').textContent = e.message; }
+  }
+  function pollLink() {
+    clearInterval(S.linkPoll);
+    S.linkPoll = setInterval(async () => { if ($('#m-link').classList.contains('hidden')) return clearInterval(S.linkPoll); try { applyLinkStatus(await api(`/chats/accounts/${linking.id}/status`)); } catch (_) {} }, 3000);
+  }
+  $('#link-choose').addEventListener('click', e => { const c = e.target.closest('[data-platform]'); if (c) openLinkModal({ platform: c.dataset.platform }); });
+  async function linked() {
+    clearInterval(S.linkPoll);
+    setTimeout(async () => { closeModal('m-link'); S.accounts = await api('/chats/accounts'); S.account = S.accounts.find(a => a.id === linking.id) || S.account; renderAccounts(); await loadChats(); toast((PF[S.account?.platform]?.name || 'Account') + ' linked — syncing chats…'); }, 800);
   }
   function applyLinkStatus(st) {
     if (!st) return;
+    if (linking?.platform === 'telegram' || st.platform === 'telegram') return applyTgStatus(st);
     const box = $('#link-qr');
     if (st.qr) { box.innerHTML = `<img src="${st.qr}" alt="QR code">`; $('#link-status').textContent = 'Scan the code with your phone (it refreshes every ~20 s).'; }
     else if (st.status === 'qr') { box.innerHTML = '<div class="spinner"></div>'; $('#link-status').textContent = 'Waiting for QR…'; }
     if (st.pairingCode) { $('#link-code').textContent = st.pairingCode.replace(/(.{4})(.{4})/, '$1-$2'); $('#link-code').classList.remove('hidden'); $('#link-phone-wrap').open = true; }
     if (st.status === 'connecting') { box.innerHTML = '<div class="spinner"></div>'; $('#link-status').textContent = 'Connecting…'; }
-    if (st.status === 'open') {
-      $('#link-status').textContent = 'Linked ✔'; box.innerHTML = '<div style="font-size:48px">✅</div>';
-      clearInterval(S.linkPoll);
-      setTimeout(async () => { closeModal('m-link'); S.accounts = await api('/chats/accounts'); S.account = S.accounts.find(a => a.id === linking.id) || S.account; renderAccounts(); await loadChats(); toast('WhatsApp linked — syncing chats…'); }, 800);
-    }
+    if (st.status === 'open') { $('#link-status').textContent = 'Linked ✔'; box.innerHTML = '<div style="font-size:48px">✅</div>'; linked(); }
     if (st.reason && st.status !== 'open') $('#link-status').textContent = st.reason;
   }
   $('#link-phone-btn').addEventListener('click', async () => {
@@ -150,6 +170,44 @@
     try { applyLinkStatus(await api(`/chats/accounts/${linking.id}/link`, { body: { pairingPhone: phone } })); $('#link-status').textContent = 'Code requested — it can take a few seconds to appear.'; }
     catch (e) { toast(e.message, 5000); } finally { $('#link-phone-btn').disabled = false; }
   });
+  // Telegram: phone → code → (password)
+  async function openTelegramLink() {
+    $('#link-tg').classList.remove('hidden');
+    const configured = S.meta.telegram?.configured;
+    $('#tg-creds').classList.toggle('hidden', !!configured);
+    $('#tg-status').textContent = '';
+    tgStep('phone');
+    if (linking.phone && !$('#tg-phone').value) $('#tg-phone').value = '+' + String(linking.phone).replace(/^\+/, '');
+    // an account mid-flow (e.g. page reload) continues where it was
+    try { const st = await api(`/chats/accounts/${linking.id}/status`); if (st.status === 'code' || st.status === 'password' || st.status === 'connecting' || st.status === 'open') applyTgStatus(st); } catch (_) {}
+    pollLink();
+  }
+  function tgStep(step) { for (const el of $$('#link-tg .tg-step')) el.classList.toggle('hidden', el.id !== 'tg-step-' + step); const inp = $('#tg-' + step); if (inp && !isPhone()) setTimeout(() => inp.focus(), 50); }
+  function applyTgStatus(st) {
+    const t = $('#tg-status');
+    if (st.status === 'phone') { tgStep('phone'); t.textContent = st.reason ? 'Could not sign in: ' + st.reason : ''; }
+    else if (st.status === 'code') { tgStep('code'); t.textContent = 'Code sent. Check your other Telegram app (or SMS).'; }
+    else if (st.status === 'password') { tgStep('password'); $('#tg-hint').textContent = st.hint ? ` (hint: ${st.hint})` : ''; t.textContent = ''; }
+    else if (st.status === 'connecting') { t.textContent = 'Signing in…'; }
+    else if (st.status === 'open') { t.textContent = 'Linked ✔'; for (const el of $$('#link-tg .tg-step')) el.classList.add('hidden'); linked(); }
+    else if (st.reason) t.textContent = st.reason;
+  }
+  async function tgSubmit(body, btn) {
+    btn.disabled = true;
+    try {
+      if (!$('#tg-creds').classList.contains('hidden')) {
+        const apiId = $('#tg-api-id').value.trim(), apiHash = $('#tg-api-hash').value.trim();
+        if (!apiId || !apiHash) throw new Error('API id and API hash are required (my.telegram.org/apps)');
+        if (apiId !== String(S.settings.telegramApiId || '') || apiHash !== (S.settings.telegramApiHash || '')) { S.settings = await put('/chats/settings', { telegramApiId: Number(apiId), telegramApiHash: apiHash }); S.meta = await api('/chats/meta'); }
+      }
+      applyTgStatus(await api(`/chats/accounts/${linking.id}/link`, { body }));
+    } catch (e) { $('#tg-status').textContent = e.message; toast(e.message, 6000); }
+    finally { btn.disabled = false; }
+  }
+  $('#tg-phone-btn').addEventListener('click', () => { const phone = $('#tg-phone').value.replace(/[^\d+]/g, ''); if (phone.replace(/\D/g, '').length < 8) return toast('Enter the full number with country code'); $('#tg-status').textContent = 'Requesting code…'; tgSubmit({ phone }, $('#tg-phone-btn')); });
+  $('#tg-code-btn').addEventListener('click', () => { const code = $('#tg-code').value.replace(/\D/g, ''); if (!code) return; tgSubmit({ code }, $('#tg-code-btn')); });
+  $('#tg-password-btn').addEventListener('click', () => { const password = $('#tg-password').value; if (!password) return; tgSubmit({ password }, $('#tg-password-btn')); });
+  for (const id of ['tg-phone', 'tg-code', 'tg-password']) $('#' + id).addEventListener('keydown', e => { if (e.key === 'Enter') $('#' + id + '-btn').click(); });
   function closeModal(id) { $('#' + id).classList.add('hidden'); if (id === 'm-link') clearInterval(S.linkPoll); }
   for (const x of $$('[data-close]')) x.addEventListener('click', () => closeModal(x.dataset.close));
   for (const m of $$('.modal')) m.addEventListener('mousedown', e => { if (e.target === m) closeModal(m.id); });
@@ -207,7 +265,7 @@
 
   async function openChat(jid) {
     if (!S.account) return;
-    S.jid = jid; S.messages = []; S.oldestTs = null; S.trState.clear(); S.hiddenTr.clear();
+    S.jid = jid; S.messages = []; S.oldestTs = null; S.trState.clear(); S.hiddenTr.clear(); clearReply(); closeMenus();
     $('#s-main').classList.add('in-thread'); $('#pane-thread').classList.remove('hidden'); $('#thread-placeholder').classList.add('hidden');
     history.replaceState(null, '', `/chats/?account=${S.account.id}&chat=${encodeURIComponent(jid)}`);
     renderChatList(); renderThreadHead(); syncBar();
@@ -229,7 +287,8 @@
     $('#thread-name').textContent = c.name;
     $('#thread-avatar').className = 'avatar' + (c.is_group ? ' group' : '');
     $('#thread-avatar').innerHTML = c.picture_url ? `<img src="${esc(c.picture_url)}" alt="">` : esc(initials(c.name));
-    $('#thread-sub').textContent = c.is_group ? 'Group' : (c.phone ? '+' + c.phone : c.jid);
+    const pf = PF[platform()]?.name || '';
+    $('#thread-sub').textContent = [c.is_group ? 'Group' : (c.phone ? '+' + c.phone : ''), pf].filter(Boolean).join(' · ');
   }
   async function markRead() {
     const c = chat(); if (!c) return;
@@ -254,10 +313,11 @@
     }
     if (m.from_me && m.original_text && S.settings.showOriginalOutgoing) notes += `<div class="tr orig"><span class="tag">you wrote</span>${esc(m.original_text)}</div>`;
     const body = m.text ? esc(m.text) : `<span class="media">${esc(kindText[m.kind] || kindText.other)}</span>`;
-    const caption = m.text && m.kind !== 'text' ? `<div class="media">${esc(kindText[m.kind] || '')}</div>` : '';
-    return `<div class="msg ${m.from_me ? 'out' : 'in'}" data-id="${m.id}" data-ts="${m.timestamp}">
-      <div class="bubble">${c?.is_group && !m.from_me && m.sender_name ? `<div class="sender">${esc(m.sender_name)}</div>` : ''}${m.quoted ? `<div class="quoted">${esc(m.quoted.text)}</div>` : ''}${caption}${body}<div class="meta">${new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} ${ticks(m)}</div></div>
-      ${notes}${m.text ? `<span class="tbtn" data-tr="${m.id}" title="Translate this message → ${esc(S.settings.myLanguage)}">🌐</span>` : ''}</div>`;
+    const caption = m.text && m.kind !== 'text' && m.kind !== 'call' ? `<div class="media">${esc(kindText[m.kind] || '')}</div>` : '';
+    const q = m.quoted ? { ...m.quoted, text: m.quoted.text || S.messages.find(x => x.msg_id === m.quoted.id)?.text || '…' } : null;
+    return `<div class="msg ${m.from_me ? 'out' : 'in'}${m.kind === 'call' ? ' call' : ''}" data-id="${m.id}" data-ts="${m.timestamp}">
+      <div class="bubble">${m.forwarded ? '<div class="fwd">↪ Forwarded</div>' : ''}${c?.is_group && !m.from_me && m.sender_name ? `<div class="sender">${esc(m.sender_name)}</div>` : ''}${q ? `<div class="quoted" data-goto="${esc(q.id || '')}">${esc(q.text)}</div>` : ''}${caption}${body}<div class="meta">${new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} ${ticks(m)}</div></div>
+      ${notes}${m.text && m.kind !== 'call' ? `<span class="tbtn" data-tr="${m.id}" title="Translate this message → ${esc(S.settings.myLanguage)}">🌐</span>` : ''}</div>`;
   }
   function renderMessages(scrollBottom) {
     const box = $('#messages'); const inner = $('#messages-inner');
@@ -282,8 +342,168 @@
   $('#messages').addEventListener('click', async e => {
     const h = e.target.closest('[data-hide]'); if (h) { S.hiddenTr.add(h.dataset.hide); S.trState.delete(h.dataset.hide); patchMessage({ id: h.dataset.hide }); return; }
     const b = e.target.closest('[data-tr]'); if (b) { toggleTranslate(b.dataset.tr); return; }
-    if (e.target.id === 'btn-earlier') loadEarlier();
+    if (e.target.id === 'btn-earlier') { loadEarlier(); return; }
+    const g = e.target.closest('[data-goto]'); if (g && g.dataset.goto) { e.stopPropagation(); if (gotoMessage(g.dataset.goto)) return; }
+    const bub = e.target.closest('.bubble'); if (bub) { const el = bub.closest('.msg'); if (el) openMsgMenu(el.dataset.id, e); }
   });
+  function gotoMessage(msgId) {
+    const m = S.messages.find(x => x.msg_id === msgId); if (!m) { status('That message is not loaded — use "Load earlier"', 'err'); return false; }
+    const el = $(`#messages-inner .msg[data-id="${m.id}"]`); if (!el) return false;
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' }); el.classList.add('hl'); setTimeout(() => el.classList.remove('hl'), 1600); return true;
+  }
+
+  // ── Message actions: reply / forward / translate / copy ────────────────────
+  function openMsgMenu(id, e) {
+    const m = S.messages.find(x => x.id === id); if (!m) return;
+    S.menuMsg = m;
+    const menu = $('#msg-menu'); menu.classList.remove('hidden');
+    for (const b of $$('#msg-menu button')) b.classList.toggle('hidden', (b.dataset.act === 'copy' || b.dataset.act === 'translate' || b.dataset.act === 'quote') && !m.text || b.dataset.act === 'forward' && m.kind === 'call');
+    placeMenu(menu, e);
+  }
+  function placeMenu(menu, e) {
+    const r = menu.getBoundingClientRect();
+    let x = e.clientX, y = e.clientY;
+    if (!x && !y) { const t = e.target.getBoundingClientRect(); x = t.left; y = t.bottom; }
+    x = Math.min(x, window.innerWidth - r.width - 8); y = Math.min(y, window.innerHeight - r.height - 8);
+    menu.style.left = Math.max(8, x) + 'px'; menu.style.top = Math.max(8, y) + 'px';
+  }
+  const closeMenus = () => { for (const m of $$('.menu')) m.classList.add('hidden'); };
+  document.addEventListener('mousedown', e => { if (!e.target.closest('.menu') && !e.target.closest('#btn-call')) closeMenus(); }, true);
+  $('#msg-menu').addEventListener('click', async e => {
+    const b = e.target.closest('[data-act]'); const m = S.menuMsg; closeMenus(); if (!b || !m) return;
+    if (b.dataset.act === 'reply') setReply(m);
+    else if (b.dataset.act === 'forward') openForward(m);
+    else if (b.dataset.act === 'translate') toggleTranslate(m.id);
+    else if (b.dataset.act === 'copy') { try { await navigator.clipboard.writeText(m.text); toast('Copied'); } catch (_) { toast('Copy failed'); } }
+    else if (b.dataset.act === 'quote') { draft.value = (draft.value ? draft.value + '\n' : '') + '> ' + m.text.replace(/\n/g, '\n> ') + '\n'; autosize(); draft.focus(); }
+  });
+  function setReply(m) {
+    S.replyTo = m;
+    $('#reply-bar').classList.remove('hidden');
+    $('#reply-who').textContent = m.from_me ? 'You' : (m.sender_name || chat()?.name || 'Reply');
+    $('#reply-text').textContent = m.text || kindText[m.kind] || '';
+    draft.focus();
+  }
+  function clearReply() { S.replyTo = null; $('#reply-bar').classList.add('hidden'); }
+  $('#reply-cancel').addEventListener('click', clearReply);
+
+  async function openForward(m) {
+    S.fwdMsg = m; S.fwdSel.clear();
+    $('#fw-preview').textContent = m.text || kindText[m.kind] || '';
+    $('#fw-search').value = ''; $('#fw-list').innerHTML = '<div class="qa-empty">Loading…</div>'; $('#m-forward').classList.remove('hidden');
+    try { S.fwdChats = await api(`/chats/accounts/${S.account.id}/chats?archived=all`); } catch (e) { S.fwdChats = [...S.chats.values()]; }
+    renderForward();
+  }
+  function renderForward() {
+    const q = $('#fw-search').value.toLowerCase().trim();
+    const rows = S.fwdChats.filter(c => !q || (c.name || '').toLowerCase().includes(q) || (c.phone || '').includes(q)).slice(0, 300);
+    $('#fw-list').innerHTML = rows.map(c => `<div class="fw-i ${S.fwdSel.has(c.jid) ? 'on' : ''}" data-jid="${esc(c.jid)}"><div class="avatar ${c.is_group ? 'group' : ''}">${c.picture_url ? `<img src="${esc(c.picture_url)}" alt="">` : esc(initials(c.name))}</div><span class="nm">${esc(c.name)}${c.archived ? ' <span class="tag">archived</span>' : ''}</span><span class="chk">✓</span></div>`).join('') || '<div class="qa-empty">No chats match.</div>';
+    $('#fw-count').textContent = S.fwdSel.size ? `${S.fwdSel.size} selected` : ''; $('#fw-send').disabled = !S.fwdSel.size;
+  }
+  $('#fw-search').addEventListener('input', renderForward);
+  $('#fw-list').addEventListener('click', e => { const it = e.target.closest('[data-jid]'); if (!it) return; const j = it.dataset.jid; if (S.fwdSel.has(j)) S.fwdSel.delete(j); else if (S.fwdSel.size < 20) S.fwdSel.add(j); else toast('Up to 20 chats at once'); renderForward(); });
+  $('#fw-send').addEventListener('click', async () => {
+    const m = S.fwdMsg; if (!m || !S.fwdSel.size) return;
+    $('#fw-send').disabled = true; $('#fw-send').textContent = 'Forwarding…';
+    try { const r = await api(`/chats/messages/${m.id}/forward`, { body: { to: [...S.fwdSel] } }); closeModal('m-forward'); toast(`Forwarded to ${r.sent} chat${r.sent === 1 ? '' : 's'}`); for (const x of r.messages || []) upsertLocal(x, true); }
+    catch (e) { toast(e.message, 6000); }
+    finally { $('#fw-send').disabled = false; $('#fw-send').textContent = 'Forward'; }
+  });
+
+  // ── Calls: open the real app to call, or live captions from the microphone ─
+  // A linked device (WhatsApp) / MTProto client (Telegram) carries no call audio, so calls themselves
+  // happen in the official app; captions listen to the phone's/room's audio through the microphone.
+  $('#btn-call').addEventListener('click', e => {
+    const c = chat(); if (!c) return;
+    const menu = $('#call-menu'); const pf = platform(); const items = [];
+    if (pf === 'whatsapp' && c.phone) {
+      items.push(`<a href="https://wa.me/${esc(c.phone)}" target="_blank" rel="noopener">💬 Open in WhatsApp → tap 📞 there</a>`);
+      items.push(`<a href="tel:+${esc(c.phone)}">📱 Regular phone call</a>`);
+    } else if (pf === 'telegram') {
+      const uid = c.jid.replace('@tg', '');
+      if (!c.is_group) items.push(`<a href="tg://user?id=${esc(uid)}">✈️ Open in Telegram → call there</a>`);
+      if (c.phone) items.push(`<a href="tel:+${esc(c.phone)}">📱 Regular phone call</a>`);
+    }
+    if (c.is_group && pf === 'whatsapp') items.push(`<span class="mh">Group calls: start them in WhatsApp</span>`);
+    items.push(`<button data-captions="1">🎙 Live captions (microphone)</button>`);
+    menu.innerHTML = items.join(''); menu.classList.remove('hidden'); placeMenu(menu, e);
+  });
+  $('#call-menu').addEventListener('click', e => { const b = e.target.closest('[data-captions]'); closeMenus(); if (b) startCaptions(); });
+
+  const CAP = { ctx: null, stream: null, node: null, seg: { speaking: false, silence: 0, chunks: [], pre: [], ms: 0 }, rate: 16000, lang: null, on: false };
+  const VAD = { threshold: 0.012, silenceMs: 700, minMs: 400, maxMs: 12000, prerollChunks: 3 };
+  const HALLUCINATIONS = /^(thank you\.?|thanks for watching\.?|subtitles by .*|you\.?|\.|bye\.?|so\.?)$/i;
+  async function startCaptions() {
+    if (CAP.on) return;
+    if (!S.meta.stt) { toast('Live captions need a Groq (free) or OpenAI key in Bibix → Settings → AI providers', 7000); }
+    const panel = $('#call-panel'); panel.classList.remove('hidden'); $('#callp-lines').innerHTML = ''; $('#callp-lang').textContent = S.settings.myLanguage;
+    capState('asking for the microphone…');
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      CAP.ctx = new AC(); await CAP.ctx.resume();
+      CAP.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+      const src = CAP.ctx.createMediaStreamSource(CAP.stream);
+      const node = CAP.ctx.createScriptProcessor(4096, 1, 1); CAP.node = node;
+      const inRate = CAP.ctx.sampleRate; const ratio = inRate / CAP.rate;
+      node.onaudioprocess = ev => {
+        const f = ev.inputBuffer.getChannelData(0);
+        const n = Math.floor(f.length / ratio); const out = new Int16Array(n);
+        for (let i = 0; i < n; i++) { let a = 0, c = 0; for (let j = Math.floor(i * ratio); j < Math.floor((i + 1) * ratio) && j < f.length; j++) { a += f[j]; c++; } const v = c ? a / c : 0; out[i] = Math.max(-1, Math.min(1, v)) * 32767; }
+        feedAudio(out);
+      };
+      src.connect(node); node.connect(CAP.ctx.destination);
+      CAP.on = true; capState('listening…', true);
+    } catch (e) { capState('microphone not available: ' + e.message); toast('Microphone: ' + e.message, 6000); }
+  }
+  function stopCaptions() {
+    CAP.on = false; try { CAP.node?.disconnect(); } catch (_) {} try { CAP.stream?.getTracks().forEach(t => t.stop()); } catch (_) {} try { CAP.ctx?.close(); } catch (_) {}
+    CAP.ctx = CAP.stream = CAP.node = null; CAP.seg = { speaking: false, silence: 0, chunks: [], pre: [], ms: 0 };
+    $('#call-panel').classList.add('hidden');
+  }
+  $('#callp-close').addEventListener('click', stopCaptions);
+  function capState(t, live) { const el = $('#callp-state'); el.textContent = t; el.classList.toggle('live', !!live); }
+  function feedAudio(a) {
+    const st = CAP.seg; const rate = CAP.rate;
+    let sum = 0; for (let i = 0; i < a.length; i++) { const v = a[i] / 32768; sum += v * v; }
+    const rms = Math.sqrt(sum / (a.length || 1)); const ms = a.length / rate * 1000; const voiced = rms > VAD.threshold;
+    if (!st.speaking) {
+      st.pre.push(a); if (st.pre.length > VAD.prerollChunks) st.pre.shift();
+      if (voiced) { st.speaking = true; st.chunks = st.pre.slice(); st.pre = []; st.ms = st.chunks.reduce((n, c) => n + c.length, 0) / rate * 1000; st.silence = 0; capState('hearing speech…', true); }
+      return;
+    }
+    st.chunks.push(a); st.ms += ms; st.silence = voiced ? 0 : st.silence + ms;
+    if (st.silence >= VAD.silenceMs || st.ms >= VAD.maxMs) {
+      const chunks = st.chunks, dur = st.ms - (st.ms >= VAD.maxMs ? 0 : st.silence);
+      st.speaking = false; st.chunks = []; st.ms = 0; st.silence = 0; capState('listening…', true);
+      if (dur >= VAD.minMs) flushUtterance(chunks, rate);
+    }
+  }
+  function wavBase64(chunks, rate) {
+    const n = chunks.reduce((a, c) => a + c.length, 0);
+    const buf = new ArrayBuffer(44 + n * 2); const v = new DataView(buf);
+    const str = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+    str(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); str(8, 'WAVE'); str(12, 'fmt '); v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 1, true);
+    v.setUint32(24, rate, true); v.setUint32(28, rate * 2, true); v.setUint16(32, 2, true); v.setUint16(34, 16, true); str(36, 'data'); v.setUint32(40, n * 2, true);
+    let o = 44; for (const c of chunks) { for (let i = 0; i < c.length; i++, o += 2) v.setInt16(o, c[i], true); }
+    const bytes = new Uint8Array(buf); let bin = ''; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return btoa(bin);
+  }
+  function capLine(main, cls) {
+    const box = $('#callp-lines'); const d = document.createElement('div'); d.className = 'callp-l' + (cls ? ' ' + cls : '');
+    d.innerHTML = '<span class="main"></span>'; $('.main', d).textContent = main; box.appendChild(d);
+    while (box.children.length > 80) box.removeChild(box.firstChild); box.scrollTop = box.scrollHeight; return d;
+  }
+  async function flushUtterance(chunks, rate) {
+    const line = capLine('…', 'pending');
+    try {
+      const { text } = await api('/chats/transcribe', { body: { audio: wavBase64(chunks, rate), mime: 'audio/wav' } });
+      if (!text || HALLUCINATIONS.test(text.trim())) { line.remove(); return; }
+      line.classList.remove('pending'); $('.main', line).textContent = text;
+      const r = await api('/chats/translate', { body: { text, from: 'auto', to: S.settings.myLanguage, detect: true } });
+      if (r.lang) CAP.lang = r.lang;
+      if (r.text && norm(r.text) !== norm(text)) { const sub = document.createElement('div'); sub.className = 'sub'; sub.innerHTML = `<span class="lg">${esc(r.lang || '')}</span>`; sub.append(r.text); line.appendChild(sub); }
+    } catch (e) { line.classList.remove('pending'); line.classList.add('fail'); $('.main', line).textContent = 'Error: ' + e.message; }
+  }
   async function toggleTranslate(id) {
     const m = S.messages.find(x => x.id === id); if (!m) return;
     if (S.hiddenTr.has(id)) { S.hiddenTr.delete(id); patchMessage({ id }); if (m.translation) return; }
@@ -393,7 +613,7 @@
     else if (e.key.toLowerCase() === 'u') { e.preventDefault(); undoDraft(); }
     else if (e.key.toLowerCase() === 'q') { e.preventDefault(); toggleQA(); }
   });
-  document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'q' && S.jid) { e.preventDefault(); toggleQA(); } if (e.key === 'Escape') { toggleQA(false); for (const m of $$('.modal')) if (!m.classList.contains('hidden')) closeModal(m.id); } });
+  document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'q' && S.jid) { e.preventDefault(); toggleQA(); } if (e.key === 'Escape') { toggleQA(false); closeMenus(); if (S.replyTo) clearReply(); for (const m of $$('.modal')) if (!m.classList.contains('hidden')) closeModal(m.id); } });
   $('#btn-send').addEventListener('click', () => translateDraft(true));
   $('#btn-inplace').addEventListener('click', () => translateDraft(false));
   $('#btn-undo').addEventListener('click', undoDraft);
@@ -423,8 +643,8 @@
     S.reviewed = false;
     try {
       status('Sending…', 'busy');
-      const m = await api(`/chats/accounts/${S.account.id}/chats/${encodeURIComponent(S.jid)}/send`, { body: { text, original: original && original !== text ? original : null } });
-      draft.value = ''; autosize(); S.lastDraft = null; $('#btn-undo').classList.add('hidden');
+      const m = await api(`/chats/accounts/${S.account.id}/chats/${encodeURIComponent(S.jid)}/send`, { body: { text, original: original && original !== text ? original : null, quoted: S.replyTo?.id || null } });
+      draft.value = ''; autosize(); S.lastDraft = null; $('#btn-undo').classList.add('hidden'); clearReply();
       upsertLocal(m, true); status('Sent: ' + text, 'ok');
     } catch (e) { status(e.message, 'err'); }
     if (!isPhone()) draft.focus();
@@ -498,6 +718,9 @@
     const s = S.settings;
     $('#st-my').value = s.myLanguage; $('#st-target').value = s.targetLanguage; $('#st-auto').checked = !!s.autoIncoming; $('#st-initial').value = s.initialIncoming;
     $('#st-orig').checked = !!s.showOriginalOutgoing; $('#st-enter').checked = s.enterTranslates !== false; $('#st-notif').checked = s.notifications !== false; $('#st-style').value = s.style || '';
+    $('#st-nf-groups').checked = s.notifyGroups !== false; $('#st-nf-archived').checked = !!s.notifyArchived; $('#st-nf-muted').checked = !!s.notifyMuted; $('#st-stt').value = s.sttProvider || '';
+    $('#st-tg-id').value = s.telegramApiId || ''; $('#st-tg-hash').value = s.telegramApiHash || '';
+    $('#st-tg-info').textContent = S.meta.telegram?.fromEnv ? 'Configured on the server — leave empty unless you want your own app credentials.' : (S.meta.telegram?.configured ? 'Using your credentials.' : 'Needed to link Telegram: create an app at my.telegram.org/apps and paste the id and hash.');
     $('#st-provider').innerHTML = '<option value="">Account default</option>' + S.meta.providers.map(p => `<option value="${p.id}">${esc(p.display)}</option>`).join('');
     $('#st-provider').value = s.provider || ''; $('#st-model').value = s.model || '';
     $('#st-provider-info').textContent = S.meta.provider ? `In use now: ${S.meta.provider.display} · ${S.meta.provider.model}` : 'No provider key found — add one in Bibix → Settings → AI providers.';
@@ -512,6 +735,7 @@
         myLanguage: $('#st-my').value, targetLanguage: $('#st-target').value, autoIncoming: $('#st-auto').checked, initialIncoming: Number($('#st-initial').value) || 0,
         showOriginalOutgoing: $('#st-orig').checked, enterTranslates: $('#st-enter').checked, notifications: $('#st-notif').checked, style: $('#st-style').value.trim(),
         provider: $('#st-provider').value || null, model: $('#st-model').value.trim() || null,
+        notifyGroups: $('#st-nf-groups').checked, notifyArchived: $('#st-nf-archived').checked, notifyMuted: $('#st-nf-muted').checked, sttProvider: $('#st-stt').value || null,
       });
       S.meta = await api('/chats/meta');
       if (S.settings.notifications) enablePush(true);
@@ -541,15 +765,37 @@
   $('#qam-import').addEventListener('click', () => $('#qam-file').click());
   $('#qam-file').addEventListener('change', async e => { const f = e.target.files[0]; if (!f) return; try { const d = JSON.parse(await f.text()); if (!Array.isArray(d)) throw new Error('Expected an array of groups'); S.qa = d; renderQAM(); toast('Imported — click Save to keep it'); } catch (err) { toast('Import failed: ' + err.message, 5000); } e.target.value = ''; });
   function renderAccountsSettings() {
-    $('#st-accounts').innerHTML = S.accounts.map(a => { const st = a.live?.status || a.status; return `<div class="acct"><span class="dot ${esc(st)}"></span><div class="info"><b>${esc(accountLabel(a))}</b><small>${esc(a.platform)} · ${esc(st)}${a.phone ? ' · +' + esc(a.phone) : ''}${a.status_reason ? ' · ' + esc(a.status_reason) : ''}</small></div>
-      ${st !== 'open' ? `<button class="sm" data-relink="${a.id}">Link</button>` : ''}<button class="sm" data-unlink="${a.id}">Unlink</button></div>`; }).join('') || '<p class="muted">No accounts.</p>';
+    $('#st-accounts').innerHTML = S.accounts.map(a => { const st = a.live?.status || a.status; const pf = PF[a.platform] || { icon: '', name: a.platform }; return `<div class="acct"><span class="dot ${esc(st)}"></span><div class="info"><b>${esc(a.label || a.display_name || (a.phone ? '+' + String(a.phone).replace(/^\+/, '') : pf.name))}</b><small><span class="pf">${pf.icon}</span>${esc(pf.name)} · ${esc(st)}${a.phone ? ' · +' + esc(String(a.phone).replace(/^\+/, '')) : ''}${a.status_reason ? ' · ' + esc(a.status_reason) : ''}</small></div>
+      <div class="acts">${st !== 'open' ? `<button class="sm" data-relink="${a.id}">Link</button>` : ''}<button class="sm" data-rename="${a.id}">Rename</button><button class="sm" data-unlink="${a.id}">Unlink</button><button class="sm" data-remove="${a.id}">Remove</button></div></div>`; }).join('') || '<p class="muted">No accounts yet.</p>';
   }
+  async function afterAccountGone(id, msg) {
+    S.accounts = await api('/chats/accounts');
+    if (S.account?.id === id) { S.account = S.accounts.find(a => a.status === 'open') || S.accounts[0] || null; closeThread(); await loadChats(); }
+    renderAccounts(); renderAccountsSettings(); toast(msg);
+  }
+  $('#st-add-account').addEventListener('click', () => { closeModal('m-settings'); openLinkModal({ choose: true }); });
+  $('#st-tg-save').addEventListener('click', async () => {
+    try { S.settings = await put('/chats/settings', { telegramApiId: Number($('#st-tg-id').value.trim()) || null, telegramApiHash: $('#st-tg-hash').value.trim() || null }); S.meta = await api('/chats/meta'); toast('Saved'); openSettings('accounts'); }
+    catch (e) { toast(e.message, 5000); }
+  });
   $('#st-accounts').addEventListener('click', async e => {
-    const u = e.target.closest('[data-unlink]'); const r = e.target.closest('[data-relink]');
-    if (r) { S.account = S.accounts.find(a => a.id === r.dataset.relink); closeModal('m-settings'); openLinkModal(); return; }
+    const u = e.target.closest('[data-unlink]'); const r = e.target.closest('[data-relink]'); const rn = e.target.closest('[data-rename]'); const rm = e.target.closest('[data-remove]');
+    if (r) { const a = S.accounts.find(x => x.id === r.dataset.relink); closeModal('m-settings'); openLinkModal({ account: a }); return; }
+    if (rn) {
+      const a = S.accounts.find(x => x.id === rn.dataset.rename); const label = prompt('Label for this account:', a.label || a.display_name || ''); if (label == null) return;
+      try { const upd = await put(`/chats/accounts/${a.id}`, { label }); Object.assign(a, upd); renderAccounts(); renderAccountsSettings(); } catch (err) { toast(err.message, 5000); }
+      return;
+    }
+    if (rm) {
+      const a = S.accounts.find(x => x.id === rm.dataset.remove);
+      if (!confirm(`Remove this ${PF[a.platform]?.name || ''} account from Bibix? Its synced chats are deleted here; the device stays linked on the phone until you end it there.`)) return;
+      try { await api(`/chats/accounts/${a.id}`, { method: 'DELETE' }); await afterAccountGone(a.id, 'Removed'); } catch (err) { toast(err.message, 5000); }
+      return;
+    }
     if (!u) return;
-    if (!confirm('Unlink this WhatsApp? The device is logged out on your phone and its synced chats are deleted from Bibix.')) return;
-    try { await api(`/chats/accounts/${u.dataset.unlink}/logout`, { body: {} }); S.accounts = await api('/chats/accounts'); if (S.account?.id === u.dataset.unlink) { S.account = S.accounts[0] || null; closeThread(); await loadChats(); } renderAccounts(); renderAccountsSettings(); toast('Unlinked'); }
+    const a = S.accounts.find(x => x.id === u.dataset.unlink);
+    if (!confirm(`Unlink this ${PF[a?.platform]?.name || ''} account? The device is logged out on your phone and its synced chats are deleted from Bibix.`)) return;
+    try { await api(`/chats/accounts/${u.dataset.unlink}/logout`, { body: {} }); await afterAccountGone(u.dataset.unlink, 'Unlinked'); }
     catch (err) { toast(err.message, 5000); }
   });
 
@@ -580,8 +826,9 @@
       if (d.message.chat_jid === S.jid) {
         upsertLocal(d.message, true);
         if (d.live && !d.message.from_me && document.visibilityState === 'visible') markRead();
-      } else if (d.live && d.inserted && !d.message.from_me) toast(`${d.chat?.name || d.message.chat_jid}: ${(d.message.text || '').slice(0, 80)}`);
+      } else if (d.live && d.inserted && !d.message.from_me && wantToast(d.chat)) toast(`${d.chat?.name || d.message.chat_jid}: ${(d.message.text || '').slice(0, 80)}`);
     });
+    on('chat:call', d => { if (d.account_id === S.account?.id && d.status === 'offer') toast(`📞 Incoming ${d.isVideo ? 'video ' : ''}call from ${d.name} — answer it on your phone`, 8000); });
     on('chat:message-update', d => { if (d.account_id === S.account?.id && d.message.chat_jid === S.jid) upsertLocal(d.message, false); });
     on('chat:translated', d => { if (d.account_id === S.account?.id && d.message.chat_jid === S.jid) { S.trState.delete(d.message.id); upsertLocal(d.message, false); } });
     on('chat:presence', d => {
@@ -591,6 +838,10 @@
       else t.classList.add('hidden');
     });
     es.onerror = () => { /* EventSource reconnects by itself */ };
+  }
+  function wantToast(c) {
+    const s = S.settings; if (!c) return true;
+    if (c.archived && !s.notifyArchived) return false; if (c.muted && !s.notifyMuted) return false; if (c.is_group && s.notifyGroups === false) return false; return true;
   }
   async function refreshThreadQuiet() {
     try { const d = await api(`/chats/accounts/${S.account.id}/chats/${encodeURIComponent(S.jid)}/messages?limit=60`); if (d.messages.length > S.messages.length || !S.messages.length) { S.messages = d.messages; S.oldestTs = d.messages[0]?.timestamp || null; renderMessages(false); } } catch (_) {}
