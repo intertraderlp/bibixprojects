@@ -89,10 +89,10 @@ export default function Sidebar() {
           </Link>
         )}
         {hasPermission('chats') && (
-          /* Chats is a standalone installable PWA served at /chats/ (own manifest + service worker) */
-          <a href="/chats/" className="flex items-center gap-3 px-4 py-2.5 text-white/70 hover:text-white hover:bg-monday-sidebar-hover rounded-lg mx-2 text-sm">
+          /* Chats (WhatsApp + Telegram) is a PWA at /chats/; embedded in the app shell at /chats */
+          <Link to="/chats" className="flex items-center gap-3 px-4 py-2.5 text-white/70 hover:text-white hover:bg-monday-sidebar-hover rounded-lg mx-2 text-sm">
             <MessageCircle size={16} /> Chats
-          </a>
+          </Link>
         )}
         {hasPermission('marketing') && (
           <div>

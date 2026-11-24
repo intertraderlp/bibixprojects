@@ -18,6 +18,7 @@ import SchedulingPage from './pages/SchedulingPage';
 import CRMPage from './pages/CRMPage';
 import InvoicePage from './pages/InvoicePage';
 import PublicFormPage from './pages/PublicFormPage';
+import ChatsPage from './pages/ChatsPage';
 import AvailabilityPage from './pages/AvailabilityPage';
 import InstagramPage from './pages/InstagramPage';
 import LinkedInPage from './pages/LinkedInPage';
@@ -66,6 +67,7 @@ export default function App() {
         <Route path="scheduling" element={<ModuleRoute module="scheduling"><SchedulingPage /></ModuleRoute>} />
         <Route path="crm" element={<ModuleRoute module="crm"><CRMPage /></ModuleRoute>} />
         <Route path="invoices" element={<InvoicePage />} />
+        <Route path="chats" element={<ModuleRoute module="chats"><ChatsPage /></ModuleRoute>} />
         <Route path="instagram" element={<Navigate to="/marketing/instagram" replace />} />
         <Route path="marketing/instagram" element={<ModuleRoute module="instagram"><InstagramPage /></ModuleRoute>} />
         <Route path="marketing/linkedin"  element={<ModuleRoute module="linkedin"><LinkedInPage /></ModuleRoute>} />

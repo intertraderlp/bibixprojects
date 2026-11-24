@@ -29,6 +29,7 @@ git log -1 --format='   now at %h %s'
 say "2/6 npm install (backend)"
 ( cd backend && npm install --omit=dev --no-audit --no-fund 2>&1 | tail -2 ) || exit 1
 node -e "require('$ROOT/backend/node_modules/@whiskeysockets/baileys/package.json'); console.log('   baileys ok')" || { say "FAIL: baileys not installed (Node >= 20 needed: node -v)"; exit 1; }
+node -e "require('$ROOT/backend/node_modules/teleproto/package.json'); console.log('   teleproto (telegram) ok')" || say "WARN: teleproto not installed — Telegram accounts will not link"
 
 say "3/6 env settings in backend/.env"
 touch "$ENV"
@@ -38,6 +39,7 @@ addenv CHATS_WORKER_PORT "$WORKER_PORT"
 addenv CHATS_APP_URL "$APP_URL"
 addenv CHATS_WA_BROWSER "Bibix,Chrome,1.0.0"
 grep -q "^CHATS_INTERNAL_SECRET=" "$ENV" || { echo "CHATS_INTERNAL_SECRET=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')" >> "$ENV"; echo "   added CHATS_INTERNAL_SECRET"; }
+grep -q "^TELEGRAM_API_ID=" "$ENV" || say "   note: TELEGRAM_API_ID/TELEGRAM_API_HASH not in .env — users can paste their own in Chats → Settings → Accounts (my.telegram.org/apps)"
 
 say "4/6 worker process + cron keep-alive"
 bash "$ROOT/backend/scripts/chats-worker.sh" restart
