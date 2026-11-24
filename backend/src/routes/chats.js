@@ -118,6 +118,11 @@ function handleEvent(ev) {
       return;
     }
     if (type === 'presence') { sse.emit(userId, 'chat:presence', { account_id: accountId, ...payload }); return; }
+    if (type === 'lid-mapping') {   // a LID→phone mapping became known: fold any LID-keyed duplicate into the real chat
+      store.upsertContacts(accountId, [{ jid: payload.pn, lid: payload.lid }]);
+      if (store.mergeLidChat(accountId, payload.lid, payload.pn)) sse.emit(userId, 'chat:chats', { account_id: accountId, chats: [store.getChat(accountId, payload.pn)], removed: [payload.lid] });
+      return;
+    }
     if (type === 'read') {   // Telegram: everything up to maxId in this chat was read by the other side
       for (const row of store.markOutgoingRead(accountId, payload.chatJid, payload.maxId)) sse.emit(userId, 'chat:message-update', { account_id: accountId, message: row });
       return;

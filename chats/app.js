@@ -1010,6 +1010,7 @@
     on('chat:history', d => { if (d.account_id === S.account?.id) { if (d.messages) loadChats(); if (d.isLatest) toast('Chat history synced'); if (S.jid && d.messages) refreshThreadQuiet(); } });
     on('chat:chats', d => {
       if (d.account_id !== S.account?.id) return;
+      for (const j of d.removed || []) { S.chats.delete(j); if (S.jid === j) closeThread(); }
       for (const c of d.chats) { if (!c) continue; if ((c.archived ? 1 : 0) === S.tab) S.chats.set(c.jid, c); else S.chats.delete(c.jid); }
       renderChatList(); updateBadge();
       if (d.detected && d.chats[0]?.jid === S.jid) { syncBar(); status(`This chat: sending in ${d.detected} (auto-detected)`, 'ok'); }

@@ -173,10 +173,14 @@ function createWhatsAppDriver({ onEvent }) {
 
   async function normChat(acc, c) {
     const { isJidGroup, isJidBroadcast, isJidStatusBroadcast } = await lib();
-    const raw = c.pnJid || (c.id && !isLid(c.id) ? c.id : null) || (await pnJid(acc, c.id)) || c.id;
-    if (!raw || isJidBroadcast(raw) || isJidStatusBroadcast(raw) || raw === 'status@broadcast') return null;
+    const raw = c.pnJid || (c.id && !isLid(c.id) ? c.id : null) || (await pnJid(acc, c.id));
+    // A chat we can only name by its LID would show up as a second, empty copy of the phone-number chat
+    // (the messages themselves carry remoteJidAlt and land in the right one) — skip it.
+    if (!raw || isLid(raw) || isJidBroadcast(raw) || isJidStatusBroadcast(raw) || raw === 'status@broadcast') return null;
     const out = { jid: raw, isGroup: isJidGroup(raw) };
-    if (c.name != null) out.name = c.name; else if (c.displayName != null) out.name = c.displayName;
+    // WhatsApp sends a masked "+357••••••32" as the name of unsaved numbers; that is not a name.
+    const nm = c.name != null ? c.name : c.displayName;
+    if (nm != null && !/[•·]{2,}/.test(nm)) out.name = nm;
     if (c.unreadCount != null) out.unreadCount = toNum(c.unreadCount);
     if (c.conversationTimestamp != null) out.lastMessageAt = tsMs(c.conversationTimestamp);
     if (c.archived != null) out.archived = !!c.archived;
@@ -265,7 +269,7 @@ function createWhatsAppDriver({ onEvent }) {
       }
     });
 
-    sock.ev.on('lid-mapping.update', (m) => { if (m?.lid && m?.pn) acc.lidMap.set(m.lid, m.pn); });
+    sock.ev.on('lid-mapping.update', (m) => { if (m?.lid && m?.pn) { acc.lidMap.set(m.lid, m.pn); emit(acc, 'lid-mapping', { lid: m.lid, pn: m.pn }); } });
 
     sock.ev.on('messaging-history.set', async ({ chats = [], contacts = [], messages = [], isLatest, progress, syncType, lidPnMappings = [] }) => {
       for (const m of lidPnMappings) if (m?.lid && m?.pn) acc.lidMap.set(m.lid, m.pn);
