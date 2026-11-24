@@ -19,8 +19,9 @@ cd "$ROOT" || { say "FAIL: no $ROOT"; exit 1; }
 
 say "1/6 git: fast-forward to origin/$BRANCH"
 git fetch origin "$BRANCH" || exit 1
-# server-built files under backend/public must not block the merge
-git checkout -- backend/public 2>/dev/null || true
+# server-built files under backend/public and npm's rewritten lockfile must not block the merge
+git checkout -- backend/public backend/package-lock.json 2>/dev/null || true
+git clean -fdq backend/public 2>/dev/null || true
 if ! git merge --ff-only "origin/$BRANCH"; then
   say "FAIL: cannot fast-forward. Local commits? Run: git log origin/$BRANCH..HEAD --oneline"; exit 1
 fi
