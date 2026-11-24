@@ -22,6 +22,11 @@
 //              PUT    /api/chats/accounts/:id/chats/:jid/prefs { send_language, send_language_detected, auto_incoming }
 //              POST   /api/chats/accounts/:id/chats/:jid/translate-recent { limit }
 //              POST   /api/chats/accounts/:id/chats/:jid/load-older { count }   (ask the phone for history)
+//   Stickers   GET    /api/chats/stickers                      my sticker library
+//              POST   /api/chats/stickers                      multipart file (any image → 512×512 webp) or { fromMessage: id }
+//              GET    /api/chats/stickers/:id/file?token=
+//              DELETE /api/chats/stickers/:id
+//              POST   /api/chats/accounts/:id/chats/:jid/sticker { stickerId }   send it
 //   AI         POST   /api/chats/translate { text, from, to, detect }
 //              POST   /api/chats/messages/:id/translate
 //              POST   /api/chats/transcribe { audio (base64), mime, language? }   speech → text for call captions
@@ -201,6 +206,23 @@ router.get('/messages/:id/media', async (req, res) => {
     if (req.query.download || info.type === 'document') res.setHeader('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${encodeURIComponent(info.fileName || row.id)}"`);
     res.sendFile(p + '.bin');
   } catch (e) { res.status(e.status || 502).json({ error: e.message }); }
+});
+
+// ── Stickers ─────────────────────────────────────────────────────────────────
+const STICKER_DIR = process.env.CHATS_STICKER_DIR || path.join(__dirname, '../../data/chats-stickers');
+let sharp = null; try { sharp = require('sharp'); } catch (_) { /* optional: the browser converts to webp when it can */ }
+const stickerPath = (userId, id) => path.join(STICKER_DIR, String(userId), id + '.webp');
+// Any image → 512×512 webp with transparent padding (WhatsApp's sticker format).
+async function toStickerWebp(buffer, mimetype) {
+  if (sharp) return sharp(buffer, { animated: false }).resize(512, 512, { fit: 'contain', background: { r: 0, g: 0, b: 0, alpha: 0 } }).webp({ quality: 90 }).toBuffer();
+  if (/webp/.test(mimetype || '')) return buffer;
+  throw Object.assign(new Error('Server cannot convert this image (sharp not installed); use Chrome/Android, which converts in the browser'), { status: 415 });
+}
+router.get('/stickers/:id/file', (req, res) => {
+  let userId; try { const p = jwt.verify(String(req.query.token || ''), JWT_SECRET); userId = p.id || p.userId; } catch { return res.status(401).end(); }
+  const st = store.getSticker(userId, req.params.id); if (!st) return res.status(404).end();
+  res.setHeader('Content-Type', 'image/webp'); res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+  res.sendFile(stickerPath(userId, st.id));
 });
 
 // ── Internal: events from the worker process ─────────────────────────────────
@@ -385,6 +407,43 @@ router.get('/accounts/:id/chats/:jid/picture', wrap(async (req) => {
   const r = await client.profilePicture(req.params.id, req.params.jid).catch(() => ({ url: null }));
   if (r?.url) store.updateChatPrefs(req.params.id, req.params.jid, { picture_url: r.url });
   return r;
+}));
+
+// ── Stickers (need login) ────────────────────────────────────────────────────
+router.get('/stickers', wrap(async (req) => store.listStickers(req.user.id)));
+router.post('/stickers', upload.single('file'), wrap(async (req) => {
+  let buffer, mimetype, name = String(req.body?.name || '').slice(0, 60) || null;
+  if (req.file) { buffer = req.file.buffer; mimetype = req.file.mimetype; name = name || req.file.originalname?.replace(/\.[^.]+$/, '') || null; }
+  else if (req.body?.fromMessage) {
+    const row = store.getMessage(req.body.fromMessage); const acc = row && store.getUserAccount(req.user.id, row.account_id);
+    const info = acc && store.mediaRaw(row.id);
+    if (!info || !(info.type === 'image' || info.type === 'sticker')) throw Object.assign(new Error('That message has no picture'), { status: 400 });
+    const p = mediaPath(acc.id, row.id);
+    if (!fs.existsSync(p + '.bin')) { const r = await client.download(acc.id, { media: info, jid: row.chat_jid, msgId: row.msg_id }); saveMedia(acc.id, row.id, r.buffer, r.mimetype || info.mimetype); }
+    buffer = fs.readFileSync(p + '.bin'); mimetype = fs.readFileSync(p + '.mime', 'utf8');
+  } else throw Object.assign(new Error('Send a file or fromMessage'), { status: 400 });
+  const webp = await toStickerWebp(buffer, mimetype);
+  const st = store.addSticker(req.user.id, name);
+  fs.mkdirSync(path.dirname(stickerPath(req.user.id, st.id)), { recursive: true });
+  fs.writeFileSync(stickerPath(req.user.id, st.id), webp);
+  return st;
+}));
+router.delete('/stickers/:id', wrap(async (req) => {
+  const st = store.getSticker(req.user.id, req.params.id); if (!st) throw Object.assign(new Error('Not found'), { status: 404 });
+  store.deleteSticker(req.user.id, st.id); try { fs.unlinkSync(stickerPath(req.user.id, st.id)); } catch (_) {}
+  return { ok: true };
+}));
+router.post('/accounts/:id/chats/:jid/sticker', wrap(async (req) => {
+  myAccount(req);
+  const st = store.getSticker(req.user.id, String(req.body?.stickerId || '')); if (!st) throw Object.assign(new Error('Sticker not found'), { status: 404 });
+  const buffer = fs.readFileSync(stickerPath(req.user.id, st.id));
+  const sent = await client.sendMedia(req.params.id, { jid: req.params.jid, buffer, mimetype: 'image/webp', fileName: 'sticker.webp', caption: '', kind: 'sticker' });
+  const media = sent.media || { type: 'sticker', mimetype: 'image/webp' };
+  const { row } = store.upsertMessage(req.params.id, { ...sent, media, chatJid: sent.chatJid || req.params.jid, fromMe: true, text: '', kind: 'sticker', status: Math.max(1, sent.status || 1) });
+  if (row) saveMedia(req.params.id, row.id, buffer, 'image/webp');
+  const shaped = row && store.getMessage(row.id);
+  if (shaped) sse.emit(req.user.id, 'chat:message', { account_id: req.params.id, message: shaped, chat: store.getChat(req.params.id, req.params.jid), live: false, inserted: true });
+  return shaped || sent;
 }));
 
 // ── AI ───────────────────────────────────────────────────────────────────────

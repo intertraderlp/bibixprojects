@@ -229,3 +229,13 @@ body.embed .pane-head .logo{display:none}
 .lb-body{flex:1;display:grid;place-items:center;overflow:auto;padding:0 8px calc(var(--sb) + 8px)}
 .lb-body img,.lb-body video{max-width:100%;max-height:100%;object-fit:contain}
 @media (max-width:767px){.emoji{left:8px;bottom:130px;width:auto;right:8px}}
+
+/* v5: stickers */
+.bubble .mimg.stk{background:transparent;min-width:0;min-height:0;max-width:180px;max-height:180px;object-fit:contain;cursor:default}
+.msg.sticker .bubble{background:transparent;box-shadow:none;padding:0}.msg.sticker .meta{background:rgba(255,255,255,.8);border-radius:6px;padding:1px 5px;align-self:flex-end}
+.emoji-grid.stk{grid-template-columns:repeat(auto-fill,minmax(72px,1fr));gap:6px}
+.emoji-grid.stk .st{position:relative;height:72px;border-radius:10px;display:grid;place-items:center;cursor:pointer;background:#f6f8f7}.emoji-grid.stk .st:hover{background:var(--teal-bg)}
+.emoji-grid.stk .st img{width:64px;height:64px;object-fit:contain}
+.emoji-grid.stk .st .x{display:none;position:absolute;top:2px;right:2px;width:20px;height:20px;border-radius:50%;background:#ef4444;color:#fff;font-size:12px;place-items:center}
+.emoji.editing .emoji-grid.stk .st .x{display:grid}
+.stk-bar{display:flex;gap:6px;align-items:center;padding:6px 8px;border-top:1px solid #eef3f1;font-size:11.5px}

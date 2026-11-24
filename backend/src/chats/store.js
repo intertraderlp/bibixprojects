@@ -83,6 +83,14 @@ db.exec(`
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 
+  CREATE TABLE IF NOT EXISTS chat_stickers (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    name TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+  CREATE INDEX IF NOT EXISTS idx_chat_stickers_user ON chat_stickers(user_id);
+
   CREATE TABLE IF NOT EXISTS chat_quick_answers (
     user_id TEXT PRIMARY KEY,
     data TEXT NOT NULL DEFAULT '[]',
@@ -314,6 +322,12 @@ function setQuickAnswers(userId, groups) {
   return groups;
 }
 
+// ── stickers (the user's own "emojis": 512×512 webp images sent as stickers) ──
+function listStickers(userId) { return db.prepare('SELECT id, name, created_at FROM chat_stickers WHERE user_id = ? ORDER BY created_at DESC').all(userId); }
+function addSticker(userId, name) { const id = uuidv4(); db.prepare('INSERT INTO chat_stickers (id, user_id, name) VALUES (?, ?, ?)').run(id, userId, name || null); return { id, name: name || null }; }
+function getSticker(userId, id) { return db.prepare('SELECT id, name FROM chat_stickers WHERE id = ? AND user_id = ?').get(id, userId); }
+function deleteSticker(userId, id) { return db.prepare('DELETE FROM chat_stickers WHERE id = ? AND user_id = ?').run(id, userId); }
+
 function transaction(fn) {
   db.exec('BEGIN');
   try { const r = fn(); db.exec('COMMIT'); return r; }
@@ -325,4 +339,5 @@ module.exports = {
   upsertContacts, listChats, getChat, ensureChat, upsertChats, updateChatPrefs, recentLanguages, setUnread, totalUnread,
   upsertMessage, updateMessage, setTranslation, getMessage, getMessageByMsgId, listMessages, untranslatedIncoming, unreadIncomingIds, markOutgoingRead, mediaRaw, setMediaLocal,
   getSettings, setSettings, getQuickAnswers, setQuickAnswers, DEFAULT_SETTINGS, transaction,
+  listStickers, addSticker, getSticker, deleteSticker,
 };

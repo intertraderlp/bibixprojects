@@ -430,6 +430,7 @@ function createWhatsAppDriver({ onEvent }) {
     const content = k === 'image' ? { image: buffer, caption: caption || undefined, mimetype: mt === 'image/webp' || mt === 'image/gif' ? 'image/jpeg' : mt }
       : k === 'video' ? { video: buffer, caption: caption || undefined, mimetype: mt }
       : k === 'audio' ? { audio: buffer, mimetype: mt, ptt: false }
+      : k === 'sticker' ? { sticker: buffer, mimetype: 'image/webp' }
       : { document: buffer, mimetype: mt, fileName: fileName || 'file', caption: caption || undefined };
     const opts = quoted?.id ? { quoted: rawFor(acc, { ...quoted, chatJid: quoted.chatJid || jid }) } : {};
     const sent = await acc.sock.sendMessage(jid, content, opts);
