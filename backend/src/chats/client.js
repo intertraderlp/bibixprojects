@@ -34,6 +34,8 @@ function createClient(handleEvent) {
       requestHistory: (id, b) => manager.requestHistory(id, b),
       profilePicture: (id, jid) => manager.profilePicture(id, jid),
       resolve: (id, b) => manager.resolve(id, b),
+      download: (id, b) => manager.download(id, b),
+      sendMedia: (id, b) => manager.sendMedia(id, b),
       resumeAll: () => manager.resumeAll(),
       health: () => Promise.resolve({ ok: true, mode: 'in-process', accounts: manager.list().length }),
     };
@@ -68,6 +70,17 @@ function createClient(handleEvent) {
     requestHistory: (id, b) => call('POST', `/accounts/${encodeURIComponent(id)}/history`, b),
     profilePicture: (id, jid) => call('GET', `/accounts/${encodeURIComponent(id)}/picture?jid=${encodeURIComponent(jid)}`),
     resolve: (id, b) => call('POST', `/accounts/${encodeURIComponent(id)}/resolve`, b),
+    download: async (id, b) => {
+      const r = await fetchFn(WORKER_URL + `/accounts/${encodeURIComponent(id)}/download`, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-chats-secret': SECRET }, body: JSON.stringify(b) });
+      if (!r.ok) { const d = await r.json().catch(() => ({})); throw Object.assign(new Error(d.error || 'worker HTTP ' + r.status), { status: r.status }); }
+      return { buffer: Buffer.from(await r.arrayBuffer()), mimetype: r.headers.get('content-type') || 'application/octet-stream' };
+    },
+    sendMedia: async (id, { buffer, ...meta }) => {
+      const r = await fetchFn(WORKER_URL + `/accounts/${encodeURIComponent(id)}/media`, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'x-chats-secret': SECRET, 'x-chats-meta': JSON.stringify(meta) }, body: buffer });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw Object.assign(new Error(d.error || 'worker HTTP ' + r.status), { status: r.status });
+      return d;
+    },
     resumeAll: () => Promise.resolve([]),   // the worker resumes its own sessions at boot
     health: () => call('GET', '/health').catch(e => ({ ok: false, mode: 'worker', error: e.message })),
   };

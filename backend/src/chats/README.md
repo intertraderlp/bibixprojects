@@ -21,6 +21,7 @@ user (any mix of WhatsApp and Telegram); the account picker is at the top of the
 | Link WhatsApp by **QR** (scan from the phone) or by **pairing code** ("Link with phone number instead" — needed when the PWA runs on the *same* phone) | ＋ → WhatsApp |
 | Appears on the phone under *Linked devices* as **Chrome (Bibix)** (`CHATS_WA_BROWSER` to change) | — |
 | Link **Telegram**: phone number → login code (sent to the other Telegram app / SMS) → 2FA password if set. Shows under Telegram → Settings → Devices as **Bibix Chats** | ＋ → Telegram |
+| **Photos, videos, voice notes, files** shown inline (tap = full screen, ⬇ download); send with 📎, **paste a screenshot** or drag & drop, caption translated like a message; 😊 emoji picker | thread / composer |
 | **Reply** (quote), **Forward** to up to 20 chats (media is forwarded when the message is still cached, otherwise as text), copy, quote in draft — tap a bubble | message menu |
 | **📞** in the thread header: open the chat in the real WhatsApp/Telegram app to call, dial the number, or **Live captions** (microphone → speech-to-text → translation) | thread header |
 | Incoming WhatsApp calls appear as call-log lines (and a push "answer it on your phone") | thread |
@@ -159,6 +160,13 @@ backoff, so messages received during a web-app restart are stored once it is bac
   (`chats/sw.js`) shows them when no Chats tab is focused and opens the right chat on tap.
 - Tables are `chat_*`; nothing else in the schema changed. `aiProviders.generateText` gained optional
   `system` and `temperature` params (backwards compatible).
+
+## Media
+Incoming media is not downloaded until shown: the message row stores the handle (WhatsApp: mediaKey +
+directPath/url; Telegram: the message id) in `chat_messages.media`, and `GET /api/chats/messages/:id/media?token=`
+downloads it once through the worker into `backend/data/chats-media/<accountId>/<messageId>.bin` and serves
+it from there afterwards (`CHATS_MEDIA_DIR` to move it). Sent files are saved there directly. Uploads go
+app → worker as a raw body (`x-chats-meta` header), up to 80 MB, 10 files per message.
 
 ## Message ids
 WhatsApp message ids are the WA ids; Telegram ids are per peer, so `msg_id` is `"<jid>:<id>"` with

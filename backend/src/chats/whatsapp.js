@@ -59,11 +59,11 @@ function describe(message) {
   if (!m) return { kind: 'other', text: '' };
   if (m.conversation) return { kind: 'text', text: m.conversation };
   if (m.extendedTextMessage) return { kind: 'text', text: m.extendedTextMessage.text || '' };
-  if (m.imageMessage) return { kind: 'image', text: m.imageMessage.caption || '' };
-  if (m.videoMessage) return { kind: 'video', text: m.videoMessage.caption || '' };
-  if (m.audioMessage) return { kind: 'audio', text: '' };
-  if (m.stickerMessage) return { kind: 'sticker', text: '' };
-  if (m.documentMessage) return { kind: 'document', text: m.documentMessage.caption || m.documentMessage.fileName || '' };
+  if (m.imageMessage) return { kind: 'image', text: m.imageMessage.caption || '', media: mediaInfo('image', m.imageMessage) };
+  if (m.videoMessage) return { kind: 'video', text: m.videoMessage.caption || '', media: mediaInfo('video', m.videoMessage) };
+  if (m.audioMessage) return { kind: 'audio', text: '', media: mediaInfo('audio', m.audioMessage) };
+  if (m.stickerMessage) return { kind: 'sticker', text: '', media: mediaInfo('sticker', m.stickerMessage) };
+  if (m.documentMessage) return { kind: 'document', text: m.documentMessage.caption || m.documentMessage.fileName || '', media: mediaInfo('document', m.documentMessage) };
   if (m.contactMessage) return { kind: 'contact', text: m.contactMessage.displayName || '' };
   if (m.contactsArrayMessage) return { kind: 'contact', text: m.contactsArrayMessage.displayName || '' };
   if (m.locationMessage) return { kind: 'location', text: m.locationMessage.name || m.locationMessage.address || '' };
@@ -79,6 +79,31 @@ function describe(message) {
   return { kind: 'other', text: '' };
 }
 
+// Everything needed to download (or forward) the media later, even after a restart: WhatsApp media is
+// an encrypted blob on their CDN; mediaKey + directPath/url are the handle. Small enough to store as JSON.
+const b64 = (v) => (v == null ? null : Buffer.from(v).toString('base64'));
+function mediaInfo(type, m) {
+  if (!m) return null;
+  return {
+    type, mimetype: m.mimetype || null, url: m.url || null, directPath: m.directPath || null,
+    mediaKey: b64(m.mediaKey), fileSha256: b64(m.fileSha256), fileEncSha256: b64(m.fileEncSha256),
+    fileLength: toNum(m.fileLength) || null, fileName: m.fileName || null, width: m.width || null, height: m.height || null,
+    seconds: m.seconds || null, ptt: !!m.ptt, thumb: m.jpegThumbnail?.length ? 'data:image/jpeg;base64,' + b64(m.jpegThumbnail) : null,
+  };
+}
+const unb64 = (v) => (v ? Buffer.from(v, 'base64') : undefined);
+// Rebuild a WhatsApp media message from stored info (for forwarding without the raw message).
+function mediaMessageFrom(info, caption) {
+  if (!info?.mediaKey || !(info.directPath || info.url)) return null;
+  const base = { url: info.url || undefined, directPath: info.directPath || undefined, mediaKey: unb64(info.mediaKey), fileSha256: unb64(info.fileSha256), fileEncSha256: unb64(info.fileEncSha256), mimetype: info.mimetype || undefined, fileLength: info.fileLength || undefined, jpegThumbnail: info.thumb ? unb64(info.thumb.split(',')[1]) : undefined };
+  const key = { image: 'imageMessage', video: 'videoMessage', audio: 'audioMessage', sticker: 'stickerMessage', document: 'documentMessage' }[info.type];
+  if (!key) return null;
+  const msg = { ...base };
+  if (caption && (info.type === 'image' || info.type === 'video' || info.type === 'document')) msg.caption = caption;
+  if (info.type === 'document') msg.fileName = info.fileName || 'file';
+  if (info.type === 'audio') msg.ptt = !!info.ptt;
+  return { [key]: msg };
+}
 function contextOf(message) {
   const m = unwrap(message); if (!m) return null;
   return Object.values(m).find(v => v && typeof v === 'object' && v.contextInfo)?.contextInfo || null;
@@ -135,7 +160,7 @@ function createWhatsAppDriver({ onEvent }) {
     const senderJid = key.fromMe ? (acc.selfJid || null) : (group ? await pnJid(acc, key.participant, key.participantAlt) : chatJid);
     return {
       id: key.id, chatJid, fromMe: !!key.fromMe, senderJid, senderName: msg.pushName || null,
-      text: d.text || '', kind: d.kind, status: toNum(msg.status) || (key.fromMe ? 1 : 0),
+      text: d.text || '', kind: d.kind, media: d.media || null, status: toNum(msg.status) || (key.fromMe ? 1 : 0),
       timestamp: tsMs(msg.messageTimestamp) || Date.now(), quoted: quotedOf(msg.message), forwarded: isForwarded(msg.message),
       isGroup: group,
     };
@@ -377,13 +402,40 @@ function createWhatsAppDriver({ onEvent }) {
 
   // A WAMessage to quote / forward: the cached original when we still have it (keeps media), else a
   // text-only stand-in built from what the database knows about the message.
-  function rawFor(acc, { id, chatJid, fromMe, senderJid, text, kind }) {
+  function rawFor(acc, { id, chatJid, fromMe, senderJid, text, kind, media }) {
     const cached = id && acc.raw.get(id);
     if (cached) return cached;
-    return {
-      key: { remoteJid: chatJid, id: id || undefined, fromMe: !!fromMe, ...(senderJid && senderJid !== chatJid ? { participant: senderJid } : {}) },
-      message: { conversation: text || (kind && kind !== 'text' ? `[${kind}]` : '') },
-    };
+    const key = { remoteJid: chatJid, id: id || undefined, fromMe: !!fromMe, ...(senderJid && senderJid !== chatJid ? { participant: senderJid } : {}) };
+    const rebuilt = media && mediaMessageFrom(media, text);
+    if (rebuilt) return { key, message: rebuilt };
+    return { key, message: { conversation: text || (kind && kind !== 'text' ? `[${kind}]` : '') } };
+  }
+
+  // download(id, { media }) → { buffer, mimetype }   (works from stored info; no raw message needed)
+  async function download(accountId, { media }) {
+    const acc = get(accountId);
+    if (!media?.mediaKey) throw Object.assign(new Error('No media handle for this message'), { status: 404 });
+    const B = await lib();
+    const stream = await B.downloadContentFromMessage({ mediaKey: unb64(media.mediaKey), directPath: media.directPath, url: media.url }, media.type, {});
+    const chunks = []; for await (const c of stream) chunks.push(c);
+    return { buffer: Buffer.concat(chunks), mimetype: media.mimetype || 'application/octet-stream' };
+  }
+
+  // sendMedia(id, { jid, buffer, mimetype, fileName, caption, kind }) → normalised sent message
+  async function sendMedia(accountId, { jid, buffer, mimetype, fileName, caption, kind, quoted }) {
+    const acc = requireOpen(accountId);
+    if (!jid || !buffer?.length) throw Object.assign(new Error('jid and file required'), { status: 400 });
+    const mt = mimetype || 'application/octet-stream';
+    const k = kind || (/^image\/(jpeg|png|webp|gif)/.test(mt) ? 'image' : /^video\//.test(mt) ? 'video' : /^audio\//.test(mt) ? 'audio' : 'document');
+    const content = k === 'image' ? { image: buffer, caption: caption || undefined, mimetype: mt === 'image/webp' || mt === 'image/gif' ? 'image/jpeg' : mt }
+      : k === 'video' ? { video: buffer, caption: caption || undefined, mimetype: mt }
+      : k === 'audio' ? { audio: buffer, mimetype: mt, ptt: false }
+      : { document: buffer, mimetype: mt, fileName: fileName || 'file', caption: caption || undefined };
+    const opts = quoted?.id ? { quoted: rawFor(acc, { ...quoted, chatJid: quoted.chatJid || jid }) } : {};
+    const sent = await acc.sock.sendMessage(jid, content, opts);
+    keepSent(acc, sent);
+    const n = await normMessage(acc, sent);
+    return n || { id: sent?.key?.id, chatJid: jid, fromMe: true, text: caption || '', kind: k, status: 1, timestamp: Date.now() };
   }
   function keepSent(acc, sent) {
     if (sent?.key?.id) {
@@ -468,7 +520,7 @@ function createWhatsAppDriver({ onEvent }) {
   // The router resumes accounts from disk; this only answers "is there WhatsApp auth state here?"
   function hasState(dir) { return fs.existsSync(path.join(dir, 'creds.json')); }
 
-  return { platform: 'whatsapp', start, status, list, stop, logout, send, forward, read, presence, requestHistory, profilePicture, resolve, hasState, shutdown, AUTH_DIR, BROWSER };
+  return { platform: 'whatsapp', start, status, list, stop, logout, send, forward, read, presence, requestHistory, profilePicture, resolve, download, sendMedia, hasState, shutdown, AUTH_DIR, BROWSER };
 }
 
 module.exports = { createWhatsAppDriver, AUTH_DIR, BROWSER, describe, unwrap };

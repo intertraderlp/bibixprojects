@@ -89,6 +89,19 @@ app.post('/accounts/:id/presence', wrap((req) => manager.presence(req.params.id,
 app.post('/accounts/:id/history', wrap((req) => manager.requestHistory(req.params.id, req.body)));
 app.get('/accounts/:id/picture', wrap((req) => manager.profilePicture(req.params.id, req.query.jid)));
 app.post('/accounts/:id/resolve', wrap((req) => manager.resolve(req.params.id, req.body)));
+// Media: binary in / binary out (metadata in headers so the body stays the raw file).
+app.post('/accounts/:id/media', express.raw({ type: '*/*', limit: '80mb' }), async (req, res) => {
+  try {
+    const meta = JSON.parse(String(req.headers['x-chats-meta'] || '{}'));
+    res.json(await manager.sendMedia(req.params.id, { ...meta, buffer: req.body }));
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+app.post('/accounts/:id/download', async (req, res) => {
+  try {
+    const r = await manager.download(req.params.id, req.body);
+    res.setHeader('Content-Type', r.mimetype || 'application/octet-stream'); res.send(r.buffer);
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
 
 app.listen(PORT, '127.0.0.1', async () => {
   console.log(`[chats-worker] listening on 127.0.0.1:${PORT} pid=${process.pid} → events to ${APP_URL}`);

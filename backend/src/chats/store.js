@@ -96,6 +96,7 @@ function addColumn(table, col, def) {
   if (!cols.includes(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
 }
 addColumn('chat_messages', 'forwarded', 'INTEGER NOT NULL DEFAULT 0');
+addColumn('chat_messages', 'media', 'TEXT');
 
 const now = () => Date.now();
 
@@ -201,10 +202,13 @@ function shapeMessage(r) {
     id: r.id, account_id: r.account_id, chat_jid: r.chat_jid, msg_id: r.msg_id, from_me: !!r.from_me,
     sender_jid: r.sender_jid, sender_name: r.sender_name, kind: r.kind, text: r.text || '', status: r.status, timestamp: r.timestamp,
     quoted: r.quoted_id || r.quoted_text ? { id: r.quoted_id, text: r.quoted_text } : null,
-    original_text: r.original_text || null, forwarded: !!r.forwarded,
+    original_text: r.original_text || null, forwarded: !!r.forwarded, media: parseMedia(r.media),
     translation: r.translation || null, translation_lang: r.translation_lang || null, translation_target: r.translation_target || null,
   };
 }
+function parseMedia(s) { if (!s) return null; try { const m = JSON.parse(s); return m && { type: m.type, mimetype: m.mimetype, fileName: m.fileName, fileLength: m.fileLength, width: m.width, height: m.height, seconds: m.seconds, thumb: m.thumb || null, local: !!m.local }; } catch (_) { return null; } }
+function mediaRaw(id) { const r = db.prepare('SELECT media FROM chat_messages WHERE id = ?').get(id); try { return r?.media ? JSON.parse(r.media) : null; } catch (_) { return null; } }
+function setMediaLocal(id, local) { const m = mediaRaw(id) || {}; m.local = local; db.prepare('UPDATE chat_messages SET media = ? WHERE id = ?').run(JSON.stringify(m), id); }
 // Insert or merge. Returns { row, inserted }.
 function upsertMessage(accountId, m) {
   if (!m?.id || !m.chatJid) return { row: null, inserted: false };
@@ -215,15 +219,16 @@ function upsertMessage(accountId, m) {
     if (m.text && m.text !== existing.text) { cols.push('text = ?'); vals.push(m.text); if (m.text !== existing.text && existing.translation) { cols.push('translation = NULL'); } }
     if (m.senderName && !existing.sender_name) { cols.push('sender_name = ?'); vals.push(m.senderName); }
     if (m.originalText && !existing.original_text) { cols.push('original_text = ?'); vals.push(m.originalText); }
+    if (m.media && !existing.media) { cols.push('media = ?'); vals.push(JSON.stringify(m.media)); }
     if (cols.length) db.prepare(`UPDATE chat_messages SET ${cols.join(', ')} WHERE id = ?`).run(...vals, existing.id);
     return { row: shapeMessage(db.prepare('SELECT * FROM chat_messages WHERE id = ?').get(existing.id)), inserted: false };
   }
   const id = uuidv4();
   ensureChat(accountId, m.chatJid, m.isGroup);
-  db.prepare(`INSERT INTO chat_messages (id, account_id, chat_jid, msg_id, from_me, sender_jid, sender_name, kind, text, status, timestamp, quoted_id, quoted_text, original_text, forwarded)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+  db.prepare(`INSERT INTO chat_messages (id, account_id, chat_jid, msg_id, from_me, sender_jid, sender_name, kind, text, status, timestamp, quoted_id, quoted_text, original_text, forwarded, media)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     id, accountId, m.chatJid, m.id, m.fromMe ? 1 : 0, m.senderJid || null, m.senderName || null, m.kind || 'text', m.text || '', m.status || 0, m.timestamp || now(),
-    m.quoted?.id || null, m.quoted?.text || null, m.originalText || null, m.forwarded ? 1 : 0);
+    m.quoted?.id || null, m.quoted?.text || null, m.originalText || null, m.forwarded ? 1 : 0, m.media ? JSON.stringify(m.media) : null);
   // keep the chat's preview current
   db.prepare(`UPDATE chat_chats SET last_message_at = ?, last_message_text = ?, last_message_from_me = ?
     WHERE account_id = ? AND jid = ? AND COALESCE(last_message_at, 0) <= ?`).run(m.timestamp || now(), previewText(m), m.fromMe ? 1 : 0, accountId, m.chatJid, m.timestamp || now());
@@ -318,6 +323,6 @@ function transaction(fn) {
 module.exports = {
   listAccounts, getAccount, getUserAccount, createAccount, updateAccount, deleteAccount,
   upsertContacts, listChats, getChat, ensureChat, upsertChats, updateChatPrefs, recentLanguages, setUnread, totalUnread,
-  upsertMessage, updateMessage, setTranslation, getMessage, getMessageByMsgId, listMessages, untranslatedIncoming, unreadIncomingIds, markOutgoingRead,
+  upsertMessage, updateMessage, setTranslation, getMessage, getMessageByMsgId, listMessages, untranslatedIncoming, unreadIncomingIds, markOutgoingRead, mediaRaw, setMediaLocal,
   getSettings, setSettings, getQuickAnswers, setQuickAnswers, DEFAULT_SETTINGS, transaction,
 };
