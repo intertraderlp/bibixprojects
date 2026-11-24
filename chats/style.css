@@ -47,7 +47,8 @@ input,select,textarea{font:inherit;color:inherit}
 .banner.ok{background:var(--teal-lt);border-color:var(--teal-bd);color:#0b6b5d}
 .banner.err{background:#fff0f2;border-color:#ffc5ce;color:var(--red)}
 .banner a,.banner button{color:inherit;font-weight:600;text-decoration:underline;background:none;border:none;padding:0}
-.search-row{padding:8px 12px}.search-row input{width:100%;padding:8px 12px;border:1px solid var(--bd);border-radius:10px;background:var(--bg)}
+.search-row{padding:8px 12px;display:flex;gap:6px;align-items:center}.search-row input{flex:1;min-width:0;padding:8px 12px;border:1px solid var(--bd);border-radius:10px;background:var(--bg)}
+#nc-input{flex:1;padding:9px 10px;border:1px solid var(--bd);border-radius:8px;font-size:16px}
 .tabs{display:flex;gap:4px;padding:0 12px 6px}.tab{padding:5px 10px;border:none;background:transparent;border-radius:999px;color:var(--muted);font-size:12.5px}.tab.on{background:var(--teal-lt);color:#0b6b5d;font-weight:600}
 .chat-list{flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch}
 .empty{padding:30px 20px;text-align:center;color:var(--muted)}

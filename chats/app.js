@@ -115,6 +115,47 @@
     S.jid = null; closeThread(); renderBanner(); await loadChats();
   });
   $('#btn-add-account').addEventListener('click', () => openLinkModal({ choose: true }));
+  // ── Remove the selected account (from the picker) ──────────────────────────
+  $('#btn-remove-account').addEventListener('click', () => {
+    const a = S.account; if (!a) return toast('No account selected');
+    $('#rm-text').textContent = `Remove “${accountLabel(a).trim()}” (${(PF[a.platform] || {}).name || a.platform})? Its synced chats are deleted from Bibix.`;
+    $('#m-rmacct').classList.remove('hidden');
+  });
+  async function removeAccount(unlink) {
+    const a = S.account; if (!a) return;
+    $('#rm-remove').disabled = $('#rm-unlink').disabled = true;
+    try {
+      if (unlink) await api(`/chats/accounts/${a.id}/logout`, { body: {} }); else await api(`/chats/accounts/${a.id}`, { method: 'DELETE' });
+      closeModal('m-rmacct'); await afterAccountGone(a.id, unlink ? 'Unlinked and removed' : 'Removed');
+    } catch (e) { toast(e.message, 6000); }
+    finally { $('#rm-remove').disabled = $('#rm-unlink').disabled = false; }
+  }
+  $('#rm-remove').addEventListener('click', () => removeAccount(false));
+  $('#rm-unlink').addEventListener('click', () => removeAccount(true));
+
+  // ── New chat by number (WhatsApp) / number or @username (Telegram) ──────────
+  $('#btn-new-chat').addEventListener('click', () => {
+    if (!S.account) return toast('Add an account first');
+    const tg = platform() === 'telegram';
+    $('#nc-help').textContent = tg ? 'Phone number with country code, or a @username. Numbers only resolve for people who allow it or are in your contacts.' : 'Phone number with country code. The chat opens even if you never messaged this number before.';
+    $('#nc-input').placeholder = tg ? '+34 600 111 222 or @username' : '+34 600 111 222';
+    $('#nc-input').value = ''; $('#nc-status').textContent = '';
+    $('#m-newchat').classList.remove('hidden'); if (!isPhone()) setTimeout(() => $('#nc-input').focus(), 50);
+  });
+  async function newChat() {
+    const v = $('#nc-input').value.trim(); if (!v) return;
+    const body = v.startsWith('@') || /[a-z]/i.test(v) ? { username: v } : { phone: v };
+    if (body.phone && body.phone.replace(/\D/g, '').length < 7) return toast('Enter the full number with country code');
+    $('#nc-go').disabled = true; $('#nc-status').textContent = 'Looking up…';
+    try {
+      const c = await api(`/chats/accounts/${S.account.id}/chats/new`, { body });
+      if ((c.archived ? 1 : 0) === S.tab) S.chats.set(c.jid, c);
+      closeModal('m-newchat'); renderChatList(); openChat(c.jid);
+    } catch (e) { $('#nc-status').textContent = e.message; }
+    finally { $('#nc-go').disabled = false; }
+  }
+  $('#nc-go').addEventListener('click', newChat);
+  $('#nc-input').addEventListener('keydown', e => { if (e.key === 'Enter') newChat(); });
 
   // ── Add / link account modal ───────────────────────────────────────────────
   let linking = null; // account being linked

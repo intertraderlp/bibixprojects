@@ -12,7 +12,7 @@
 <link rel="icon" href="/chats/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/chats/icon-192.png">
 <title>Bibix Chats</title>
-<link rel="stylesheet" href="/chats/style.css?v=2">
+<link rel="stylesheet" href="/chats/style.css?v=3">
 </head>
 <body>
 <div id="app">
@@ -35,10 +35,11 @@
         <span class="logo" title="Bibix Chats">A</span>
         <select id="account-select" title="Account"></select>
         <button class="icon" id="btn-add-account" title="Add an account (WhatsApp or Telegram)">＋</button>
+        <button class="icon" id="btn-remove-account" title="Remove the selected account">－</button>
         <button class="icon" id="btn-settings" title="Settings">⚙</button>
       </header>
       <div id="account-banner" class="banner hidden"></div>
-      <div class="search-row"><input id="chat-search" placeholder="Search chats" autocomplete="off"></div>
+      <div class="search-row"><input id="chat-search" placeholder="Search chats" autocomplete="off"><button class="icon" id="btn-new-chat" title="New chat: start a conversation with a phone number">✎</button></div>
       <div class="tabs"><button class="tab on" data-tab="0">Chats</button><button class="tab" data-tab="1">Archived</button></div>
       <div id="chat-list" class="chat-list"></div>
       <div id="list-empty" class="empty hidden"></div>
@@ -91,6 +92,26 @@
     <button data-act="translate">🌐 Translate</button>
     <button data-act="copy">⎘ Copy text</button>
     <button data-act="quote">“ Quote in draft</button>
+  </div>
+
+  <!-- New chat -->
+  <div id="m-newchat" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><b>New chat</b><span class="act" data-close="m-newchat">✕</span></div>
+      <p class="muted" id="nc-help"></p>
+      <div class="row"><input id="nc-input" placeholder="+34 600 111 222" inputmode="tel" autocomplete="off"><button class="btn primary" id="nc-go">Open chat</button></div>
+      <p class="muted" id="nc-status"></p>
+    </div>
+  </div>
+
+  <!-- Remove account -->
+  <div id="m-rmacct" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><b>Remove account</b><span class="act" data-close="m-rmacct">✕</span></div>
+      <p id="rm-text"></p>
+      <div class="row end"><button class="btn" id="rm-remove">Remove from Bibix</button><button class="btn primary" id="rm-unlink">Unlink &amp; remove</button></div>
+      <p class="muted"><b>Unlink &amp; remove</b> also logs the device out on the phone. <b>Remove from Bibix</b> only deletes it here (end the session on the phone yourself).</p>
+    </div>
   </div>
 
   <!-- Forward picker -->
@@ -220,6 +241,6 @@
 
   <div id="toast" class="toast hidden"></div>
 </div>
-<script src="/chats/app.js?v=2"></script>
+<script src="/chats/app.js?v=3"></script>
 </body>
 </html>

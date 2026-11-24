@@ -12,6 +12,7 @@
 //              POST   /api/chats/accounts/:id/logout           unlink (logs the device out on the platform) + delete
 //              DELETE /api/chats/accounts/:id                  remove from Bibix only (keeps the device linked)
 //   Chats      GET    /api/chats/accounts/:id/chats?archived=0|1|all
+//              POST   /api/chats/accounts/:id/chats/new { phone | username }   start a chat with a number not in the list
 //              GET    /api/chats/accounts/:id/chats/:jid/messages?before=&limit=
 //              POST   /api/chats/accounts/:id/chats/:jid/send  { text, original?, quoted? (message uuid → reply) }
 //              POST   /api/chats/messages/:id/forward          { to: [jid, …] }
@@ -234,6 +235,15 @@ router.post('/accounts/:id/logout', wrap(async (req) => {
 router.get('/accounts/:id/chats', wrap(async (req) => {
   myAccount(req);
   return store.listChats(req.params.id, { archived: req.query.archived === 'all' ? 'all' : req.query.archived === '1' ? 1 : 0 });
+}));
+router.post('/accounts/:id/chats/new', wrap(async (req) => {
+  const acc = myAccount(req);
+  const r = await client.resolve(acc.id, { phone: req.body?.phone || null, username: req.body?.username || null });
+  store.ensureChat(acc.id, r.jid, r.isGroup);
+  if (r.name) store.upsertChats(acc.id, [{ jid: r.jid, name: r.name, isGroup: r.isGroup }]);
+  const chat = store.getChat(acc.id, r.jid);
+  sse.emit(req.user.id, 'chat:chats', { account_id: acc.id, chats: [chat] });
+  return chat;
 }));
 router.get('/accounts/:id/chats/:jid/messages', wrap(async (req) => {
   myAccount(req);

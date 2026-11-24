@@ -88,6 +88,7 @@ app.post('/accounts/:id/read', wrap((req) => manager.read(req.params.id, req.bod
 app.post('/accounts/:id/presence', wrap((req) => manager.presence(req.params.id, req.body)));
 app.post('/accounts/:id/history', wrap((req) => manager.requestHistory(req.params.id, req.body)));
 app.get('/accounts/:id/picture', wrap((req) => manager.profilePicture(req.params.id, req.query.jid)));
+app.post('/accounts/:id/resolve', wrap((req) => manager.resolve(req.params.id, req.body)));
 
 app.listen(PORT, '127.0.0.1', async () => {
   console.log(`[chats-worker] listening on 127.0.0.1:${PORT} pid=${process.pid} → events to ${APP_URL}`);

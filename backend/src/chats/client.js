@@ -33,6 +33,7 @@ function createClient(handleEvent) {
       presence: (id, b) => manager.presence(id, b),
       requestHistory: (id, b) => manager.requestHistory(id, b),
       profilePicture: (id, jid) => manager.profilePicture(id, jid),
+      resolve: (id, b) => manager.resolve(id, b),
       resumeAll: () => manager.resumeAll(),
       health: () => Promise.resolve({ ok: true, mode: 'in-process', accounts: manager.list().length }),
     };
@@ -66,6 +67,7 @@ function createClient(handleEvent) {
     presence: (id, b) => call('POST', `/accounts/${encodeURIComponent(id)}/presence`, b),
     requestHistory: (id, b) => call('POST', `/accounts/${encodeURIComponent(id)}/history`, b),
     profilePicture: (id, jid) => call('GET', `/accounts/${encodeURIComponent(id)}/picture?jid=${encodeURIComponent(jid)}`),
+    resolve: (id, b) => call('POST', `/accounts/${encodeURIComponent(id)}/resolve`, b),
     resumeAll: () => Promise.resolve([]),   // the worker resumes its own sessions at boot
     health: () => call('GET', '/health').catch(e => ({ ok: false, mode: 'worker', error: e.message })),
   };
