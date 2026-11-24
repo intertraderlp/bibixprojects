@@ -372,8 +372,11 @@ function createTelegramDriver({ onEvent, authDir, logger }) {
     const acc = requireOpen(id);
     if (!jid || !buffer?.length) throw Object.assign(new Error('jid and file required'), { status: 400 });
     const file = Buffer.from(buffer); file.name = fileName || ('file.' + ((mimetype || '').split('/')[1] || 'bin').replace('jpeg', 'jpg'));
-    const asDoc = !(kind === 'image' || kind === 'video' || /^image\/(jpeg|png)/.test(mimetype || '') || /^video\/mp4/.test(mimetype || ''));
-    const m = await acc.client.sendFile(await entityFor(acc, jid), { file, caption: caption || undefined, forceDocument: asDoc, replyTo: quoted?.id ? numOf(quoted.id) : undefined });
+    const asDoc = !(kind === 'image' || kind === 'video' || kind === 'sticker' || /^image\/(jpeg|png)/.test(mimetype || '') || /^video\/mp4/.test(mimetype || ''));
+    if (kind === 'sticker') { file.name = 'sticker.webp'; }
+    const { Api } = tg();
+    const attributes = kind === 'sticker' ? [new Api.DocumentAttributeFilename({ fileName: 'sticker.webp' }), new Api.DocumentAttributeSticker({ alt: '', stickerset: new Api.InputStickerSetEmpty() })] : undefined;
+    const m = await acc.client.sendFile(await entityFor(acc, jid), { file, caption: caption || undefined, forceDocument: asDoc, attributes, replyTo: quoted?.id ? numOf(quoted.id) : undefined });
     const n = await normMessage(acc, m, jid);
     return n || { id: msgIdOf(jid, m?.id || Date.now()), chatJid: jid, fromMe: true, text: caption || '', kind: kind || 'document', status: 2, timestamp: Date.now() };
   }

@@ -22,6 +22,7 @@ user (any mix of WhatsApp and Telegram); the account picker is at the top of the
 | Appears on the phone under *Linked devices* as **Chrome (Bibix)** (`CHATS_WA_BROWSER` to change) | — |
 | Link **Telegram**: phone number → login code (sent to the other Telegram app / SMS) → 2FA password if set. Shows under Telegram → Settings → Devices as **Bibix Chats** | ＋ → Telegram |
 | **Photos, videos, voice notes, files** shown inline (tap = full screen, ⬇ download); send with 📎, **paste a screenshot** or drag & drop, caption translated like a message; 😊 emoji picker | thread / composer |
+| **My stickers** (your own "emojis"): 😊 → ⭐ — make one from any picture (512×512 webp, converted in the browser, or by `sharp` on the server), save a received sticker/photo, tap to send | emoji panel |
 | **Reply** (quote), **Forward** to up to 20 chats (media is forwarded when the message is still cached, otherwise as text), copy, quote in draft — tap a bubble | message menu |
 | **📞** in the thread header: open the chat in the real WhatsApp/Telegram app to call, dial the number, or **Live captions** (microphone → speech-to-text → translation) | thread header |
 | Incoming WhatsApp calls appear as call-log lines (and a push "answer it on your phone") | thread |

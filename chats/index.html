@@ -12,7 +12,7 @@
 <link rel="icon" href="/chats/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/chats/icon-192.png">
 <title>Bibix Chats</title>
-<link rel="stylesheet" href="/chats/style.css?v=4">
+<link rel="stylesheet" href="/chats/style.css?v=5">
 </head>
 <body>
 <div id="app">
@@ -96,6 +96,7 @@
     <button data-act="translate">🌐 Translate</button>
     <button data-act="copy">⎘ Copy text</button>
     <button data-act="quote">“ Quote in draft</button>
+    <button data-act="sticker">⭐ Save as my sticker</button>
   </div>
 
   <!-- New chat -->
@@ -140,6 +141,8 @@
   <div id="emoji-panel" class="emoji hidden">
     <div class="emoji-tabs" id="emoji-tabs"></div>
     <div class="emoji-grid" id="emoji-grid"></div>
+    <div class="stk-bar hidden" id="stk-bar"><button class="sm" id="stk-add">+ From picture</button><button class="sm" id="stk-edit">Edit</button><span class="muted">Tap a sticker to send it</span></div>
+    <input type="file" id="stk-input" accept="image/*" multiple hidden>
   </div>
 
   <!-- Lightbox -->
@@ -257,6 +260,6 @@
 
   <div id="toast" class="toast hidden"></div>
 </div>
-<script src="/chats/app.js?v=4"></script>
+<script src="/chats/app.js?v=5"></script>
 </body>
 </html>

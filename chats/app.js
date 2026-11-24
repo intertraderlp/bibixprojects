@@ -358,13 +358,14 @@
     if (m.media) {
       const u = mediaUrl(m); const md = m.media;
       const cap = m.text ? `<div class="cap">${esc(m.text)}</div>` : '';
-      if (md.type === 'image' || md.type === 'sticker') { body = `<img class="mimg" src="${u}" loading="lazy" alt="" data-lb="${m.id}"${md.thumb ? ` style="background-image:url(${md.thumb})"` : ''}${md.width && md.height ? ` width="${Math.min(320, md.width)}" height="${Math.round(Math.min(320, md.width) * md.height / md.width)}"` : ''}>${cap}`; caption = ''; }
+      if (md.type === 'sticker') { body = `<img class="mimg stk" src="${u}" loading="lazy" alt="sticker">`; caption = ''; }
+      else if (md.type === 'image') { body = `<img class="mimg" src="${u}" loading="lazy" alt="" data-lb="${m.id}"${md.thumb ? ` style="background-image:url(${md.thumb})"` : ''}${md.width && md.height ? ` width="${Math.min(320, md.width)}" height="${Math.round(Math.min(320, md.width) * md.height / md.width)}"` : ''}>${cap}`; caption = ''; }
       else if (md.type === 'video') { body = `<video controls preload="none" playsinline src="${u}"${md.thumb ? ` poster="${md.thumb}"` : ''}></video>${cap}`; caption = ''; }
       else if (md.type === 'audio') { body = `<audio controls preload="none" src="${u}"></audio>${cap}`; caption = ''; }
       else if (md.type === 'document') { body = `<a class="doc" href="${u}&download=1" target="_blank" rel="noopener">📄<span><span class="nm">${esc(md.fileName || 'File')}</span><small>${md.fileLength ? fmtSize(md.fileLength) : ''}</small></span></a>${m.text && m.text !== md.fileName ? cap : ''}`; caption = ''; }
     }
     const q = m.quoted ? { ...m.quoted, text: m.quoted.text || S.messages.find(x => x.msg_id === m.quoted.id)?.text || '…' } : null;
-    return `<div class="msg ${m.from_me ? 'out' : 'in'}${m.kind === 'call' ? ' call' : ''}" data-id="${m.id}" data-ts="${m.timestamp}">
+    return `<div class="msg ${m.from_me ? 'out' : 'in'}${m.kind === 'call' ? ' call' : ''}${m.media?.type === 'sticker' ? ' sticker' : ''}" data-id="${m.id}" data-ts="${m.timestamp}">
       <div class="bubble">${m.forwarded ? '<div class="fwd">↪ Forwarded</div>' : ''}${c?.is_group && !m.from_me && m.sender_name ? `<div class="sender">${esc(m.sender_name)}</div>` : ''}${q ? `<div class="quoted" data-goto="${esc(q.id || '')}">${esc(q.text)}</div>` : ''}${caption}${body}<div class="meta">${new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} ${ticks(m)}</div></div>
       ${notes}${m.text && m.kind !== 'call' ? `<span class="tbtn" data-tr="${m.id}" title="Translate this message → ${esc(S.settings.myLanguage)}">🌐</span>` : ''}</div>`;
   }
@@ -417,7 +418,7 @@
     const m = S.messages.find(x => x.id === id); if (!m) return;
     S.menuMsg = m;
     const menu = $('#msg-menu'); menu.classList.remove('hidden');
-    for (const b of $$('#msg-menu button')) b.classList.toggle('hidden', (b.dataset.act === 'copy' || b.dataset.act === 'translate' || b.dataset.act === 'quote') && !m.text || b.dataset.act === 'forward' && m.kind === 'call');
+    for (const b of $$('#msg-menu button')) b.classList.toggle('hidden', (b.dataset.act === 'copy' || b.dataset.act === 'translate' || b.dataset.act === 'quote') && !m.text || b.dataset.act === 'forward' && m.kind === 'call' || b.dataset.act === 'sticker' && !(m.media?.type === 'image' || m.media?.type === 'sticker'));
     placeMenu(menu, e);
   }
   function placeMenu(menu, e) {
@@ -435,6 +436,7 @@
     else if (b.dataset.act === 'forward') openForward(m);
     else if (b.dataset.act === 'translate') toggleTranslate(m.id);
     else if (b.dataset.act === 'copy') { try { await navigator.clipboard.writeText(m.text); toast('Copied'); } catch (_) { toast('Copy failed'); } }
+    else if (b.dataset.act === 'sticker') { try { status('Saving sticker…', 'busy'); await api('/chats/stickers', { body: { fromMessage: m.id } }); S.stickers = null; status('Saved to My stickers (😊 → ⭐)', 'ok'); } catch (e) { status(e.message, 'err'); } }
     else if (b.dataset.act === 'quote') { draft.value = (draft.value ? draft.value + '\n' : '') + '> ' + m.text.replace(/\n/g, '\n> ') + '\n'; autosize(); draft.focus(); }
   });
   function setReply(m) {
@@ -739,11 +741,53 @@
     '💡': '⌚️ 📱 📲 💻 ⌨️ 🖥 🖨 🖱 🖲 🕹 🗜 💽 💾 💿 📀 📼 📷 📸 📹 🎥 📽 🎞 📞 ☎️ 📟 📠 📺 📻 🎙 🎚 🎛 🧭 ⏱ ⏲ ⏰ 🕰 ⌛️ ⏳ 📡 🔋 🪫 🔌 💡 🔦 🕯 🪔 🧯 🛢 💸 💵 💴 💶 💷 🪙 💰 💳 💎 ⚖️ 🪜 🧰 🪛 🔧 🔨 ⚒ 🛠 ⛏ 🪚 🔩 ⚙️ 🪤 🧱 ⛓ 🧲 🔫 💣 🧨 🪓 🔪 🗡 ⚔️ 🛡 🚬 ⚰️ 🪦 ⚱️ 🏺 🔮 📿 🧿 🪬 💈 ⚗️ 🔭 🔬 🕳 🩹 🩺 💊 💉 🩸 🧬 🦠 🧫 🧪 🌡 🧹 🪠 🧺 🧻 🚽 🚰 🚿 🛁 🛀 🧼 🪥 🪒 🧽 🪣 🧴 🛎 🔑 🗝 🚪 🪑 🛋 🛏 🛌 🧸 🪆 🖼 🪞 🪟 🛍 🛒 🎁 🎈 🎏 🎀 🪄 🪅 🎊 🎉 🎎 🏮 🎐 🧧 ✉️ 📩 📨 📧 💌 📥 📤 📦 🏷 🪧 📪 📫 📬 📭 📮 📯 📜 📃 📄 📑 🧾 📊 📈 📉 🗒 🗓 📆 📅 🗑 📇 🗃 🗳 🗄 📋 📁 📂 🗂 🗞 📰 📓 📔 📒 📕 📗 📘 📙 📚 📖 🔖 🧷 🔗 📎 🖇 📐 📏 🧮 📌 📍 ✂️ 🖊 🖋 ✒️ 🖌 🖍 📝 ✏️ 🔍 🔎 🔏 🔐 🔒 🔓',
     '❤️': '❤️ 🧡 💛 💚 💙 💜 🖤 🤍 🤎 💔 ❤️‍🔥 ❤️‍🩹 ❣️ 💕 💞 💓 💗 💖 💘 💝 💟 ☮️ ✝️ ☪️ 🕉 ☸️ ✡️ 🔯 🕎 ☯️ ☦️ 🛐 ⛎ ♈️ ♉️ ♊️ ♋️ ♌️ ♍️ ♎️ ♏️ ♐️ ♑️ ♒️ ♓️ 🆔 ⚛️ 🉑 ☢️ ☣️ 📴 📳 🈶 🈚️ 🈸 🈺 🈷️ ✴️ 🆚 💮 🉐 ㊙️ ㊗️ 🈴 🈵 🈹 🈲 🅰️ 🅱️ 🆎 🆑 🅾️ 🆘 ❌ ⭕️ 🛑 ⛔️ 📛 🚫 💯 💢 ♨️ 🚷 🚯 🚳 🚱 🔞 📵 🚭 ❗️ ❕ ❓ ❔ ‼️ ⁉️ 🔅 🔆 〽️ ⚠️ 🚸 🔱 ⚜️ 🔰 ♻️ ✅ 🈯️ 💹 ❇️ ✳️ ❎ 🌐 💠 Ⓜ️ 🌀 💤 🏧 🚾 ♿️ 🅿️ 🛗 🈳 🈂️ 🛂 🛃 🛄 🛅 🚹 🚺 🚼 ⚧ 🚻 🚮 🎦 📶 🈁 🔣 ℹ️ 🔤 🔡 🔠 🆖 🆗 🆙 🆒 🆕 🆓 0️⃣ 1️⃣ 2️⃣ 3️⃣ 4️⃣ 5️⃣ 6️⃣ 7️⃣ 8️⃣ 9️⃣ 🔟 🔢 #️⃣ *️⃣ ⏏️ ▶️ ⏸ ⏯ ⏹ ⏺ ⏭ ⏮ ⏩ ⏪ ⏫ ⏬ ◀️ 🔼 🔽 ➡️ ⬅️ ⬆️ ⬇️ ↗️ ↘️ ↙️ ↖️ ↕️ ↔️ ↪️ ↩️ ⤴️ ⤵️ 🔀 🔁 🔂 🔄 🔃 🎵 🎶 ➕ ➖ ➗ ✖️ 🟰 ♾ 💲 💱 ™️ ©️ ®️ 👁‍🗨 🔚 🔙 🔛 🔝 🔜 〰️ ➰ ➿ ✔️ ☑️ 🔘 🔴 🟠 🟡 🟢 🔵 🟣 ⚫️ ⚪️ 🟤 🔺 🔻 🔸 🔹 🔶 🔷 🔳 🔲 ▪️ ▫️ ◾️ ◽️ ◼️ ◻️ 🟥 🟧 🟨 🟩 🟦 🟪 ⬛️ ⬜️ 🟫 🔈 🔇 🔉 🔊 🔔 🔕 📣 📢 💬 💭 🗯 ♠️ ♣️ ♥️ ♦️ 🃏 🎴 🀄️ 🕐 🕑 🕒 🕓 🕔 🕕 🕖 🕗 🕘 🕙 🕚 🕛',
   };
-  let emojiTab = '😀';
+  let emojiTab = '😀'; S.stickers = null;
+  const stickerUrl = (id) => `/api/chats/stickers/${id}/file?token=${encodeURIComponent(S.token)}`;
+  async function loadStickers() { if (!S.stickers) { try { S.stickers = await api('/chats/stickers'); } catch (_) { S.stickers = []; } } return S.stickers; }
+  async function renderStickers() {
+    const list = await loadStickers(); const g = $('#emoji-grid'); g.classList.add('stk');
+    g.innerHTML = list.map(s => `<div class="st" data-st="${s.id}" title="${esc(s.name || '')}"><img src="${stickerUrl(s.id)}" alt=""><span class="x" data-del="${s.id}">✕</span></div>`).join('')
+      || '<span class="muted" style="grid-column:1/-1;font-size:13px;height:auto;padding:12px;line-height:1.4">No stickers yet. <b>+ From picture</b> turns any photo, screenshot or drawing into a sticker (512×512, transparent padding). You can also tap a received sticker or photo → <b>Save as my sticker</b>.</span>';
+  }
+  // Any image → 512×512 webp in the browser (Chrome/Android); other browsers upload the original and the server converts.
+  function imageToSticker(file) {
+    return new Promise((resolve) => {
+      const img = new Image(); const url = URL.createObjectURL(file);
+      img.onload = () => {
+        const c = document.createElement('canvas'); c.width = c.height = 512; const x = c.getContext('2d');
+        const r = Math.min(512 / img.width, 512 / img.height); const w = Math.round(img.width * r), h = Math.round(img.height * r);
+        x.drawImage(img, (512 - w) / 2, (512 - h) / 2, w, h); URL.revokeObjectURL(url);
+        c.toBlob(b => resolve(b && b.type === 'image/webp' ? b : file), 'image/webp', 0.9);
+      };
+      img.onerror = () => { URL.revokeObjectURL(url); resolve(file); };
+      img.src = url;
+    });
+  }
+  const baseName = (n) => String(n || '').replace(/[.][^.]*$/, '');
+  $('#stk-add').addEventListener('click', () => $('#stk-input').click());
+  $('#stk-input').addEventListener('change', async e => {
+    const files = [...e.target.files]; e.target.value = ''; if (!files.length) return;
+    for (const f of files) {
+      try {
+        const blob = await imageToSticker(f); const fd = new FormData(); fd.append('file', blob, baseName(f.name || 'sticker') + (blob.type === 'image/webp' ? '.webp' : '')); fd.append('name', baseName(f.name));
+        const r = await fetch('/api/chats/stickers', { method: 'POST', headers: { Authorization: 'Bearer ' + S.token }, body: fd }); const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status);
+      } catch (err) { toast('Sticker: ' + err.message, 6000); }
+    }
+    S.stickers = null; renderStickers(); toast(files.length === 1 ? 'Sticker added' : `${files.length} stickers added`);
+  });
+  $('#stk-edit').addEventListener('click', () => { const p = $('#emoji-panel'); p.classList.toggle('editing'); $('#stk-edit').textContent = p.classList.contains('editing') ? 'Done' : 'Edit'; });
+  async function sendSticker(id) {
+    if (!S.jid) return toast('Open a chat first');
+    $('#emoji-panel').classList.add('hidden');
+    try { status('Sending sticker…', 'busy'); const m = await api(`/chats/accounts/${S.account.id}/chats/${encodeURIComponent(S.jid)}/sticker`, { body: { stickerId: id } }); if (m?.id) upsertLocal(m, true); status('Sent', 'ok'); }
+    catch (e) { status(e.message, 'err'); }
+  }
   const recentEmoji = () => { try { return JSON.parse(localStorage.getItem('chats_emoji_recent') || '[]'); } catch (_) { return []; } };
   function renderEmoji() {
-    const tabs = Object.keys(EMOJI);
-    $('#emoji-tabs').innerHTML = tabs.map(t => `<button data-t="${t}" class="${t === emojiTab ? 'on' : ''}">${t}</button>`).join('');
+    const tabs = ['⭐', ...Object.keys(EMOJI)];
+    $('#emoji-tabs').innerHTML = tabs.map(t => `<button data-t="${t}" class="${t === emojiTab ? 'on' : ''}" title="${t === '⭐' ? 'My stickers' : ''}">${t}</button>`).join('');
+    $('#stk-bar').classList.toggle('hidden', emojiTab !== '⭐'); $('#emoji-grid').classList.toggle('stk', emojiTab === '⭐');
+    if (emojiTab === '⭐') { renderStickers(); return; }
     const list = emojiTab === '🕘' ? recentEmoji() : String(EMOJI[emojiTab]).split(' ').filter(Boolean);
     $('#emoji-grid').innerHTML = list.map(e => `<span>${e}</span>`).join('') || '<span class="muted" style="grid-column:1/-1;font-size:13px;height:auto;padding:12px">No recent emoji yet</span>';
   }
@@ -753,7 +797,9 @@
   }
   $('#btn-emoji').addEventListener('click', () => { const p = $('#emoji-panel'); const open = p.classList.contains('hidden'); p.classList.toggle('hidden', !open); if (open) { if (recentEmoji().length && emojiTab === '😀') emojiTab = '🕘'; renderEmoji(); } });
   $('#emoji-tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if (b) { emojiTab = b.dataset.t; renderEmoji(); } });
-  $('#emoji-grid').addEventListener('click', e => {
+  $('#emoji-grid').addEventListener('click', async e => {
+    const del = e.target.closest('[data-del]'); if (del) { e.stopPropagation(); if (!confirm('Delete this sticker?')) return; try { await api(`/chats/stickers/${del.dataset.del}`, { method: 'DELETE' }); S.stickers = null; renderStickers(); } catch (err) { toast(err.message); } return; }
+    const st = e.target.closest('[data-st]'); if (st) { if (!$('#emoji-panel').classList.contains('editing')) sendSticker(st.dataset.st); return; }
     const s = e.target.closest('span'); if (!s || !s.textContent.trim() || s.classList.contains('muted')) return;
     const em = s.textContent; insertAtCursor(em);
     const r = [em, ...recentEmoji().filter(x => x !== em)].slice(0, 40); localStorage.setItem('chats_emoji_recent', JSON.stringify(r));
