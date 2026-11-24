@@ -176,8 +176,8 @@ app.get('/app', (req, res) => res.redirect('/app/'));
 
 // ── Serve the Chats PWA (WhatsApp linked device + AI translation) ─────────────
 const CHATS_DIR = path.join(__dirname, '../../chats');
-app.use('/chats', express.static(CHATS_DIR, { setHeaders: (res, p) => { if (/\/(index\.html|sw\.js|app\.js|manifest\.json)$/.test(p)) res.setHeader('Cache-Control', 'no-cache'); } }));
-app.get('/chats', (req, res) => res.redirect('/chats/'));
+// /chats/ (trailing slash) is the standalone PWA; bare /chats falls through to the SPA, which embeds it in the app shell.
+app.use('/chats', express.static(CHATS_DIR, { redirect: false, setHeaders: (res, p) => { if (/\/(index\.html|sw\.js|app\.js|manifest\.json)$/.test(p)) res.setHeader('Cache-Control', 'no-cache'); } }));
 
 // ── Serve built React frontend in production ──────────────────────────────────
 const FRONTEND_DIST = path.join(__dirname, '../public');

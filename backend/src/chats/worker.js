@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // ─────────────────────────────────────────────────────────────────────────────
 // Chats worker — a separate, always-on Node process that owns the WhatsApp
-// sockets (Baileys needs ONE long-lived process per linked device).
+// sockets (Baileys needs ONE long-lived process per linked device) and the
+// Telegram MTProto clients.
 //
 // On LiteSpeed/lsnode hosting the web process can be killed, restarted or
 // duplicated at any time, which would drop or duplicate the WhatsApp session.
@@ -77,11 +78,12 @@ const wrap = (fn) => async (req, res) => {
 
 app.get('/health', (req, res) => res.json({ ok: true, pid: process.pid, accounts: manager.list().map(a => ({ id: a.accountId, status: a.status })), queued: queue.length }));
 app.get('/accounts', wrap(() => manager.list()));
-app.post('/accounts/:id/start', wrap((req) => manager.start({ accountId: req.params.id, userId: req.body.userId, platform: req.body.platform, pairingPhone: req.body.pairingPhone })));
+app.post('/accounts/:id/start', wrap((req) => manager.start({ ...req.body, accountId: req.params.id })));
 app.get('/accounts/:id/status', wrap((req) => manager.status(req.params.id)));
 app.post('/accounts/:id/stop', wrap((req) => manager.stop(req.params.id)));
 app.post('/accounts/:id/logout', wrap((req) => manager.logout(req.params.id)));
 app.post('/accounts/:id/send', wrap((req) => manager.send(req.params.id, req.body)));
+app.post('/accounts/:id/forward', wrap((req) => manager.forward(req.params.id, req.body)));
 app.post('/accounts/:id/read', wrap((req) => manager.read(req.params.id, req.body)));
 app.post('/accounts/:id/presence', wrap((req) => manager.presence(req.params.id, req.body)));
 app.post('/accounts/:id/history', wrap((req) => manager.requestHistory(req.params.id, req.body)));

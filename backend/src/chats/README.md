@@ -1,10 +1,11 @@
-# Bibix Chats — WhatsApp (linked device) + AI translation, as an installable PWA
+# Bibix Chats — WhatsApp (linked device) + Telegram, with AI translation, as an installable PWA
 
-Open **`/chats/`** on the Bibix host (sidebar → *Chats*, or install it on the phone from the
-browser's *Add to Home Screen*). It links the user's **own WhatsApp account as a linked device**
-— the same protocol WhatsApp Web uses — and gives a chat UI with the translation features of the
-`extension-chat-ai/` Chrome extension built in. Telegram is planned as the second account type
-(the data model and API already carry a `platform` field on every account).
+Open **`/chats/`** on the Bibix host (sidebar → *Chats* shows it inside the Bibix app; `/chats/`
+directly is the standalone PWA — install it on the phone from the browser's *Add to Home Screen*).
+It links the user's **own WhatsApp account as a linked device** — the same protocol WhatsApp Web
+uses — and/or **Telegram accounts** through the official client API, and gives a chat UI with the
+translation features of the `extension-chat-ai/` Chrome extension built in. Several accounts per
+user (any mix of WhatsApp and Telegram); the account picker is at the top of the chat list.
 
 > ## ⚠️ Read this before linking a number
 > Bibix Chats is **not an official WhatsApp client**. It uses [Baileys](https://github.com/WhiskeySockets/Baileys),
@@ -17,8 +18,14 @@ browser's *Add to Home Screen*). It links the user's **own WhatsApp account as a
 ## What it does
 | Feature | Where |
 |---|---|
-| Link WhatsApp by **QR** (scan from the phone) or by **pairing code** ("Link with phone number instead" — needed when the PWA runs on the *same* phone) | *Link WhatsApp* modal |
+| Link WhatsApp by **QR** (scan from the phone) or by **pairing code** ("Link with phone number instead" — needed when the PWA runs on the *same* phone) | ＋ → WhatsApp |
 | Appears on the phone under *Linked devices* as **Chrome (Bibix)** (`CHATS_WA_BROWSER` to change) | — |
+| Link **Telegram**: phone number → login code (sent to the other Telegram app / SMS) → 2FA password if set. Shows under Telegram → Settings → Devices as **Bibix Chats** | ＋ → Telegram |
+| **Reply** (quote), **Forward** to up to 20 chats (media is forwarded when the message is still cached, otherwise as text), copy, quote in draft — tap a bubble | message menu |
+| **📞** in the thread header: open the chat in the real WhatsApp/Telegram app to call, dial the number, or **Live captions** (microphone → speech-to-text → translation) | thread header |
+| Incoming WhatsApp calls appear as call-log lines (and a push "answer it on your phone") | thread |
+| Accounts: add, rename, **Unlink** (logs out on the phone) or **Remove** (Bibix only) | Settings → Accounts |
+| Notifications: never for archived or muted chats (optional), groups optional | Settings |
 | Chat list with unread counts, last message, pinned/archived, per-chat language chip | left pane |
 | Thread with day separators, read ticks, quoted messages, media placeholders, "Load earlier" (local) and **Older…** (asks the phone for history) | right pane |
 | **Send in `<language>`** per chat, remembered; **auto-detected** from incoming messages unless you chose one (dashed chip / green select) | toolbar |
@@ -30,25 +37,49 @@ browser's *Add to Home Screen*). It links the user's **own WhatsApp account as a
 | Live updates (new messages, status, translations) over the app's SSE stream; **web push** when no tab is open; app badge with unread count | — |
 | Style instructions, provider/model choice per user | Settings |
 
+**Calls are not carried by Bibix.** A WhatsApp linked device never receives the call audio (calls are
+end-to-end between the phones) and Telegram calls likewise need the official app, so "call" opens the
+real app (`wa.me/<number>`, `tg://user?id=…`) or dials the number (`tel:`). *Live captions* is the
+extension's call-captions feature done with the microphone instead of a page hook: put the call on
+speaker and the PWA transcribes what it hears (Groq Whisper / OpenAI, keys from AI providers) and
+translates it into your language. Listen-only; nothing is injected into the call.
+
 AI keys are the ones in **Bibix → Settings → AI providers** (`user_ai_providers`), used server-side;
 nothing is sent from the browser to a provider. Env keys (`GROQ_API_KEY`, `OPENAI_API_KEY`,
 `GEMINI_API_KEY`, …) are a fallback. Default models for chats: Groq `openai/gpt-oss-120b`,
 OpenAI `gpt-4o-mini`, Gemini `gemini-2.5-flash` (see `translate.js`). The prompt is the extension's
 `buildSystemPrompt` with the `LANG:` first-line detection.
 
+## Telegram setup
+Telegram's client API needs an **API id + API hash** (free): log in at https://my.telegram.org/apps,
+create an application (any name/platform), copy the two values. Either put them on the server —
+```
+TELEGRAM_API_ID=1234567
+TELEGRAM_API_HASH=0123456789abcdef0123456789abcdef
+```
+in `backend/.env` (both the app and the worker read it) — or each user pastes their own pair in
+Chats → Settings → Accounts (stored in their chat settings). The MTProto session string is kept in
+`backend/data/chats/<userId>/<accountId>/telegram.session`; `meta.json` next to it carries the
+platform (and the api id/hash) so the worker resumes it at boot. Library: `teleproto` (maintained
+fork of GramJS). Unlinking calls `auth.logOut`, which also removes the device from the phone's list.
+
 ## Layout
 ```
-backend/src/chats/sessionManager.js   Baileys sockets: auth state on disk, reconnect/backoff, QR + pairing code,
-                                      normalises events → onEvent(). No DB access.
+backend/src/chats/sessionManager.js   Router over the platform drivers; resumeAll() reads each account's meta.json.
+backend/src/chats/whatsapp.js         Baileys sockets: auth state on disk, reconnect/backoff, QR + pairing code,
+                                      quote/forward (raw message cache), call signalling, normalises events → onEvent(). No DB access.
+backend/src/chats/telegram.js         teleproto client per account: phone/code/password login gates, dialogs + history,
+                                      new messages, read receipts, typing; same normalised events.
 backend/src/chats/worker.js           Optional separate always-on process exposing the manager on 127.0.0.1:3002
                                       and POSTing events to the app (/api/chats/internal/events) with a retry queue.
 backend/src/chats/client.js           App-side handle: in-process manager (dev) or HTTP proxy to the worker (prod).
 backend/src/chats/store.js            SQLite tables chat_accounts, chat_contacts, chat_chats, chat_messages,
                                       chat_user_settings, chat_quick_answers (all in monday.db).
-backend/src/chats/translate.js        Provider resolution + translation with LRU cache.
+backend/src/chats/translate.js        Provider resolution + translation with LRU cache; speech-to-text for live captions.
 backend/src/routes/chats.js           REST API (see header comment) + event handling → DB + SSE + push.
 backend/scripts/chats-worker.sh       start/stop/status/restart for the worker; cron-friendly.
 chats/                                The PWA: index.html, app.js, style.css, sw.js, manifest.json, icons.
+frontend/src/pages/ChatsPage.tsx      The same PWA embedded (iframe, ?embed=1) at /chats inside the Bibix app shell.
 ```
 Auth state: `backend/data/chats/<userId>/<accountId>/` (`creds.json`, keys, `meta.json`). Deleting the
 folder = the device must be re-linked. `backend/data/` is git-ignored.
@@ -71,7 +102,7 @@ talks to it over localhost — same pattern as the AI Love app on port 3001.
 
 1. **Deploy the branch** as usual (staging: `git fetch && git reset --hard origin/<branch>`), then
    `cd backend && npm install --omit=dev` — this adds `@whiskeysockets/baileys`, `qrcode`,
-   `@hapi/boom`, `pino` (Node ≥ 20 required; the server has Node 20).
+   `@hapi/boom`, `pino`, `teleproto` (Node ≥ 20 required; the server has Node 20).
 2. **`backend/.env`** (both the web app and the worker read it):
    ```
    CHATS_WORKER_URL=http://127.0.0.1:3002      # web app → proxy everything to the worker
@@ -84,6 +115,8 @@ talks to it over localhost — same pattern as the AI Love app on port 3001.
    CHATS_WA_BROWSER=Bibix,Chrome,1.0.0         # what the phone shows under Linked devices
    CHATS_AUTH_DIR=/home/<user>/bibixprojects-staging/backend/data/chats
    CHATS_LOG_LEVEL=warn
+   TELEGRAM_API_ID=…                           # see "Telegram setup" (or users paste their own in Settings)
+   TELEGRAM_API_HASH=…
    ```
    Pick a free port per environment (e.g. 3002 staging, 3003 production) — staging and production
    each run their own worker and their own `.env`.
@@ -127,7 +160,6 @@ backoff, so messages received during a web-app restart are stored once it is bac
 - Tables are `chat_*`; nothing else in the schema changed. `aiProviders.generateText` gained optional
   `system` and `temperature` params (backwards compatible).
 
-## Telegram (next)
-Add a `telegram` session type to `sessionManager.js` (GramJS/TDLib with the official client API —
-no ToS problem), emit the same normalised events, and the store/API/UI need no change beyond
-`platform` on the account and a phone-number + code link flow in the modal.
+## Message ids
+WhatsApp message ids are the WA ids; Telegram ids are per peer, so `msg_id` is `"<jid>:<id>"` with
+`jid = "<markedPeerId>@tg"`. Call-log lines are `"call:<callId>"`.

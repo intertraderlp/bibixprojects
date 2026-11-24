@@ -2,27 +2,33 @@
 // Chats module — REST API for the /chats/ PWA.
 //
 //   Accounts   GET    /api/chats/accounts                      list my accounts (+ live status)
-//              POST   /api/chats/accounts                      create { platform, label }
-//              POST   /api/chats/accounts/:id/link             start linking { pairingPhone? } → status (+qr / pairingCode)
+//              POST   /api/chats/accounts                      create { platform: whatsapp|telegram, label }
+//              PUT    /api/chats/accounts/:id                  rename { label }
+//              POST   /api/chats/accounts/:id/link             start linking → status
+//                        WhatsApp: { pairingPhone? }           (+qr / pairingCode)
+//                        Telegram: { phone } → status 'code' → { code } → ('password' → { password }) → open
 //              GET    /api/chats/accounts/:id/status           live status (qr data-URL while linking)
 //              POST   /api/chats/accounts/:id/stop             disconnect, keep session
-//              POST   /api/chats/accounts/:id/logout           unlink (logs the device out of WhatsApp) + delete
-//   Chats      GET    /api/chats/accounts/:id/chats?archived=0
+//              POST   /api/chats/accounts/:id/logout           unlink (logs the device out on the platform) + delete
+//              DELETE /api/chats/accounts/:id                  remove from Bibix only (keeps the device linked)
+//   Chats      GET    /api/chats/accounts/:id/chats?archived=0|1|all
 //              GET    /api/chats/accounts/:id/chats/:jid/messages?before=&limit=
-//              POST   /api/chats/accounts/:id/chats/:jid/send  { text, original? }
+//              POST   /api/chats/accounts/:id/chats/:jid/send  { text, original?, quoted? (message uuid → reply) }
+//              POST   /api/chats/messages/:id/forward          { to: [jid, …] }
 //              POST   /api/chats/accounts/:id/chats/:jid/read
 //              PUT    /api/chats/accounts/:id/chats/:jid/prefs { send_language, send_language_detected, auto_incoming }
 //              POST   /api/chats/accounts/:id/chats/:jid/translate-recent { limit }
 //              POST   /api/chats/accounts/:id/chats/:jid/load-older { count }   (ask the phone for history)
 //   AI         POST   /api/chats/translate { text, from, to, detect }
 //              POST   /api/chats/messages/:id/translate
+//              POST   /api/chats/transcribe { audio (base64), mime, language? }   speech → text for call captions
 //              GET    /api/chats/meta                           languages, provider in use, recent languages
 //   Settings   GET/PUT /api/chats/settings                      per-user (my language, defaults, style, provider)
 //              GET/PUT /api/chats/quick-answers
 //   Internal   POST   /api/chats/internal/events               worker → app (x-chats-secret)
 //
 // Live updates go out over the existing SSE stream (/api/events?token=):
-//   chat:status, chat:chats, chat:message, chat:message-update, chat:translated, chat:history
+//   chat:status, chat:chats, chat:message, chat:message-update, chat:translated, chat:history, chat:call
 // ─────────────────────────────────────────────────────────────────────────────
 const express = require('express');
 const db = require('../db/database');
@@ -52,7 +58,7 @@ function handleEvent(ev) {
       if (payload.name) patch.display_name = payload.name;
       if (payload.status === 'open' && (!acc.linked_at || payload.isNewLogin)) patch.linked_at = new Date().toISOString();
       store.updateAccount(accountId, patch);
-      sse.emit(userId, 'chat:status', { account_id: accountId, status: payload.status, qr: payload.qr || null, pairingCode: payload.pairingCode || null, phone: payload.phone || null, name: payload.name || null, reason: payload.reason || null });
+      sse.emit(userId, 'chat:status', { account_id: accountId, platform: acc.platform, status: payload.status, qr: payload.qr || null, pairingCode: payload.pairingCode || null, hint: payload.hint || null, phone: payload.phone || null, name: payload.name || null, reason: payload.reason || null });
       return;
     }
     if (type === 'history') {
@@ -82,8 +88,9 @@ function handleEvent(ev) {
           const chat = store.getChat(accountId, m.chatJid);
           const auto = chat?.auto_incoming == null ? settings.autoIncoming : chat.auto_incoming;
           if (auto && row.text) translateIncoming(userId, settings, accountId, row).catch(() => {});
-          // Push notification when no browser tab is listening.
-          if (settings.notifications !== false && !sse.hasClients(userId) && !chat?.muted) {
+          // Push notification when no browser tab is listening — never for archived / muted chats
+          // (and groups only if the user wants them): the phone already decides what it shows.
+          if (shouldNotify(settings, chat, m.isGroup || chat?.is_group) && !sse.hasClients(userId)) {
             const title = chat?.name || m.chatJid;
             sendPushToUser(userId, title, (m.isGroup && m.senderName ? m.senderName + ': ' : '') + (row.text || previewKind(row.kind)), { url: '/chats/?account=' + accountId + '&chat=' + encodeURIComponent(m.chatJid), type: 'chat' });
           }
@@ -99,7 +106,36 @@ function handleEvent(ev) {
       return;
     }
     if (type === 'presence') { sse.emit(userId, 'chat:presence', { account_id: accountId, ...payload }); return; }
+    if (type === 'read') {   // Telegram: everything up to maxId in this chat was read by the other side
+      for (const row of store.markOutgoingRead(accountId, payload.chatJid, payload.maxId)) sse.emit(userId, 'chat:message-update', { account_id: accountId, message: row });
+      return;
+    }
+    if (type === 'calls') {  // WhatsApp call signalling → a call-log line in the chat (+ push on an incoming call)
+      const settings = store.getSettings(userId);
+      for (const c of payload) {
+        const label = c.status === 'offer' ? (c.isVideo ? '📹 Incoming video call' : '📞 Incoming voice call')
+          : c.status === 'accept' ? (c.isVideo ? '📹 Video call' : '📞 Voice call')
+          : c.status === 'timeout' || c.status === 'reject' ? (c.isVideo ? '📹 Missed video call' : '📞 Missed voice call')
+          : c.status === 'terminate' ? (c.isVideo ? '📹 Video call ended' : '📞 Voice call ended') : null;
+        if (!label) continue;
+        const { row, inserted } = store.upsertMessage(accountId, { id: 'call:' + c.id, chatJid: c.chatJid, fromMe: c.from && c.from !== c.chatJid, kind: 'call', text: label, status: 0, timestamp: c.at || Date.now(), isGroup: c.isGroup });
+        if (!row) continue;
+        if (!inserted) store.updateMessage(accountId, 'call:' + c.id, { text: label });
+        const chat = store.getChat(accountId, c.chatJid);
+        sse.emit(userId, 'chat:message', { account_id: accountId, message: store.getMessageByMsgId(accountId, 'call:' + c.id), chat, live: true, inserted });
+        sse.emit(userId, 'chat:call', { account_id: accountId, chat_jid: c.chatJid, status: c.status, isVideo: c.isVideo, name: chat?.name || c.chatJid });
+        if (c.status === 'offer' && shouldNotify(settings, chat, c.isGroup) && !sse.hasClients(userId)) sendPushToUser(userId, chat?.name || c.chatJid, label + ' — answer it on your phone', { url: '/chats/?account=' + accountId + '&chat=' + encodeURIComponent(c.chatJid), type: 'chat' });
+      }
+      return;
+    }
   } catch (e) { console.warn('[chats] event', type, 'failed:', e.message); }
+}
+function shouldNotify(settings, chat, isGroup) {
+  if (settings.notifications === false) return false;
+  if (chat?.archived && !settings.notifyArchived) return false;
+  if (chat?.muted && !settings.notifyMuted) return false;
+  if (isGroup && settings.notifyGroups === false) return false;
+  return true;
 }
 function previewKind(kind) { return ({ image: '📷 Photo', video: '🎥 Video', audio: '🎤 Voice message', sticker: 'Sticker', document: '📄 Document', contact: '👤 Contact', location: '📍 Location', poll: '📊 Poll' })[kind] || 'New message'; }
 
@@ -152,17 +188,38 @@ router.get('/accounts', wrap(async (req) => {
   const byId = new Map(live.map(a => [a.accountId, a]));
   return rows.map(a => ({ ...a, live: byId.get(a.id) ? { status: byId.get(a.id).status, reason: byId.get(a.id).reason } : null, unread: 0 }));
 }));
+const PLATFORMS = ['whatsapp', 'telegram'];
 router.post('/accounts', wrap(async (req) => {
   const platform = (req.body?.platform || 'whatsapp').toLowerCase();
-  if (platform !== 'whatsapp') throw Object.assign(new Error('Only WhatsApp is available for now (Telegram is next)'), { status: 400 });
+  if (!PLATFORMS.includes(platform)) throw Object.assign(new Error('Unknown platform: ' + platform), { status: 400 });
   return store.createAccount(req.user.id, { platform, label: req.body?.label });
 }));
-router.put('/accounts/:id', wrap(async (req) => { myAccount(req); return store.updateAccount(req.params.id, { label: req.body?.label || null }); }));
+router.put('/accounts/:id', wrap(async (req) => { myAccount(req); return store.updateAccount(req.params.id, { label: (req.body?.label || '').trim().slice(0, 60) || null }); }));
+function telegramCreds(userId, settings) {
+  const apiId = Number(settings?.telegramApiId || process.env.TELEGRAM_API_ID || 0) || null;
+  const apiHash = String(settings?.telegramApiHash || process.env.TELEGRAM_API_HASH || '').trim() || null;
+  return { apiId, apiHash };
+}
 router.post('/accounts/:id/link', wrap(async (req) => {
   const acc = myAccount(req);
-  const st = await client.start({ accountId: acc.id, userId: req.user.id, platform: acc.platform, pairingPhone: req.body?.pairingPhone || null });
-  store.updateAccount(acc.id, { status: st.status, status_reason: st.reason || null });
+  const b = req.body || {};
+  const opts = { accountId: acc.id, userId: req.user.id, platform: acc.platform };
+  if (acc.platform === 'telegram') {
+    Object.assign(opts, telegramCreds(req.user.id, store.getSettings(req.user.id)), { phone: b.phone || null, code: b.code || null, password: b.password || null });
+  } else {
+    opts.pairingPhone = b.pairingPhone || null;
+  }
+  const st = await client.start(opts);
+  const patch = { status: st.status, status_reason: st.reason || null };
+  if (st.phone) patch.phone = st.phone; if (st.name) patch.display_name = st.name;
+  store.updateAccount(acc.id, patch);
   return st;
+}));
+router.delete('/accounts/:id', wrap(async (req) => {
+  myAccount(req);
+  try { await client.stop(req.params.id); } catch (e) { /* worker down: still remove locally */ }
+  store.deleteAccount(req.params.id);
+  return { ok: true };
 }));
 router.get('/accounts/:id/status', wrap(async (req) => { myAccount(req); return client.status(req.params.id); }));
 router.post('/accounts/:id/stop', wrap(async (req) => { myAccount(req); await client.stop(req.params.id); return store.updateAccount(req.params.id, { status: 'stopped' }); }));
@@ -176,7 +233,7 @@ router.post('/accounts/:id/logout', wrap(async (req) => {
 // ── Chats & messages ─────────────────────────────────────────────────────────
 router.get('/accounts/:id/chats', wrap(async (req) => {
   myAccount(req);
-  return store.listChats(req.params.id, { archived: req.query.archived === '1' ? 1 : 0 });
+  return store.listChats(req.params.id, { archived: req.query.archived === 'all' ? 'all' : req.query.archived === '1' ? 1 : 0 });
 }));
 router.get('/accounts/:id/chats/:jid/messages', wrap(async (req) => {
   myAccount(req);
@@ -188,10 +245,33 @@ router.post('/accounts/:id/chats/:jid/send', wrap(async (req) => {
   myAccount(req);
   const text = String(req.body?.text || '').trim();
   if (!text) throw Object.assign(new Error('text required'), { status: 400 });
-  const sent = await client.send(req.params.id, { jid: req.params.jid, text });
+  let quoted = null;
+  if (req.body?.quoted) {
+    const q = store.getMessage(req.body.quoted);
+    if (q && q.account_id === req.params.id) quoted = { id: q.msg_id, chatJid: q.chat_jid, fromMe: q.from_me, senderJid: q.sender_jid, text: q.text, kind: q.kind };
+  }
+  const sent = await client.send(req.params.id, { jid: req.params.jid, text, quoted });
+  if (quoted && !sent.quoted) sent.quoted = { id: quoted.id, text: quoted.text || `[${quoted.kind}]` };
   const { row } = store.upsertMessage(req.params.id, { ...sent, chatJid: sent.chatJid || req.params.jid, fromMe: true, text: sent.text || text, originalText: req.body?.original && req.body.original !== text ? req.body.original : null, status: Math.max(1, sent.status || 1) });
   sse.emit(req.user.id, 'chat:message', { account_id: req.params.id, message: row, chat: store.getChat(req.params.id, req.params.jid), live: false, inserted: true });
   return row;
+}));
+router.post('/messages/:id/forward', wrap(async (req) => {
+  const row = store.getMessage(req.params.id);
+  if (!row) throw Object.assign(new Error('Message not found'), { status: 404 });
+  const acc = store.getUserAccount(req.user.id, row.account_id);
+  if (!acc) throw Object.assign(new Error('Message not found'), { status: 404 });
+  const to = [...new Set((req.body?.to || []).map(String).filter(Boolean))].slice(0, 20);
+  if (!to.length) throw Object.assign(new Error('Pick at least one chat'), { status: 400 });
+  if (row.kind === 'call') throw Object.assign(new Error('Call entries cannot be forwarded'), { status: 400 });
+  const sent = await client.forward(acc.id, { toJids: to, message: { id: row.msg_id, chatJid: row.chat_jid, fromMe: row.from_me, senderJid: row.sender_jid, text: row.text, kind: row.kind } });
+  const rows = [];
+  for (const m of sent) {
+    const { row: r } = store.upsertMessage(acc.id, { ...m, fromMe: true, forwarded: true, status: Math.max(1, m.status || 1) });
+    if (!r) continue; rows.push(r);
+    sse.emit(req.user.id, 'chat:message', { account_id: acc.id, message: r, chat: store.getChat(acc.id, r.chat_jid), live: false, inserted: true });
+  }
+  return { ok: true, sent: rows.length, messages: rows };
 }));
 router.post('/accounts/:id/chats/:jid/read', wrap(async (req) => {
   myAccount(req);
@@ -257,9 +337,18 @@ router.post('/messages/:id/translate', wrap(async (req) => {
   if (!row.from_me && r.lang) adoptLanguage(req.user.id, settings, row.account_id, row.chat_jid, r.lang);
   return { message: saved, same, lang: r.lang };
 }));
+router.post('/transcribe', wrap(async (req) => {
+  const settings = store.getSettings(req.user.id);
+  const { audio, mime, language, prompt } = req.body || {};
+  return tr.transcribe({ userId: req.user.id, settings, audio, mime, language, prompt });
+}));
 router.get('/meta', wrap(async (req) => {
   const settings = store.getSettings(req.user.id);
+  const tgc = telegramCreds(req.user.id, settings);
   return {
+    platforms: PLATFORMS,
+    telegram: { configured: !!(tgc.apiId && tgc.apiHash), fromEnv: !!(process.env.TELEGRAM_API_ID && process.env.TELEGRAM_API_HASH) },
+    stt: tr.sttInfo(req.user.id, settings),
     languages: tr.LANGUAGES, recent: store.recentLanguages(req.user.id),
     provider: tr.providerInfo(req.user.id, settings), providers: tr.listProviders(), defaultModels: tr.CHAT_DEFAULT_MODEL,
     worker: await client.health(), mode: client.mode, workerUrl: WORKER_URL || null,
@@ -271,7 +360,8 @@ router.get('/meta', wrap(async (req) => {
 // ── Settings & quick answers ─────────────────────────────────────────────────
 router.get('/settings', wrap(async (req) => store.getSettings(req.user.id)));
 router.put('/settings', wrap(async (req) => {
-  const allowed = ['myLanguage', 'targetLanguage', 'autoIncoming', 'initialIncoming', 'showOriginalOutgoing', 'enterTranslates', 'style', 'provider', 'model', 'notifications'];
+  const allowed = ['myLanguage', 'targetLanguage', 'autoIncoming', 'initialIncoming', 'showOriginalOutgoing', 'enterTranslates', 'style', 'provider', 'model', 'notifications',
+    'notifyGroups', 'notifyArchived', 'notifyMuted', 'sttProvider', 'telegramApiId', 'telegramApiHash'];
   const patch = {}; for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
   return store.setSettings(req.user.id, patch);
 }));
@@ -284,7 +374,7 @@ router.put('/quick-answers', wrap(async (req) => {
 
 // Resume linked sessions at boot (in-process mode only; the worker resumes its own).
 router.boot = async () => {
-  try { const r = await client.resumeAll(); if (r.length) console.log(`[chats] resumed ${r.length} WhatsApp session(s) (${client.mode})`); }
+  try { const r = await client.resumeAll(); if (r.length) console.log(`[chats] resumed ${r.length} chat session(s) (${client.mode})`); }
   catch (e) { console.warn('[chats] resume failed:', e.message); }
 };
 
