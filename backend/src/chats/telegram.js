@@ -330,11 +330,33 @@ function createTelegramDriver({ onEvent, authDir, logger }) {
     } catch (_) {}
     return { url: null };
   }
+  // resolve({ phone | username }) → { jid, name } (phone numbers only resolve for Telegram contacts / users who allow it)
+  async function resolve(id, { phone, username }) {
+    const acc = requireOpen(id);
+    const { Api } = tg();
+    let entity = null;
+    try {
+      if (username) entity = await acc.client.getEntity(String(username).replace(/^@/, ''));
+      else if (phone) {
+        const digits = '+' + String(phone).replace(/\D/g, '');
+        try { entity = await acc.client.getEntity(digits); }
+        catch (_) {
+          const r = await acc.client.invoke(new Api.contacts.ResolvePhone({ phone: digits }));
+          entity = r.users?.[0] || null;
+        }
+      }
+    } catch (e) { throw Object.assign(new Error('Telegram could not find that ' + (username ? 'username' : 'number') + ' (' + e.message + ')'), { status: 404 }); }
+    if (!entity) throw Object.assign(new Error('Not found on Telegram'), { status: 404 });
+    const pid = String(tg().utils.getPeerId(entity));
+    const name = entity.title || [entity.firstName, entity.lastName].filter(Boolean).join(' ') || entity.username || null;
+    acc.names.set(pid, name);
+    return { jid: jidOf(pid), name, exists: true, isGroup: !!entity.title };
+  }
   function hasState(dir) { return fs.existsSync(path.join(dir, 'telegram.session')); }
   async function resume({ accountId, userId }) { const acc = await start({ accountId, userId }); const a = get(accountId); if (a) a.resumed = true; return acc; }
   async function shutdown() { for (const acc of accounts.values()) { try { await acc.client?.disconnect(); } catch (_) {} } }
 
-  return { platform: 'telegram', start, resume, status, list, stop, logout, send, forward, read, presence, requestHistory, profilePicture, hasState, shutdown, isTgJid };
+  return { platform: 'telegram', start, resume, status, list, stop, logout, send, forward, read, presence, requestHistory, profilePicture, resolve, hasState, shutdown, isTgJid };
 }
 
 module.exports = { createTelegramDriver, isTgJid, jidOf, peerOf };

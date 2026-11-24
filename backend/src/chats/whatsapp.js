@@ -441,6 +441,21 @@ function createWhatsAppDriver({ onEvent }) {
     return { ok: true, requestId: id };
   }
 
+  // resolve({ phone }) → { jid, name, exists } so a chat can be started with a number that is not in the chat list yet
+  async function resolve(accountId, { phone }) {
+    const acc = requireOpen(accountId);
+    const digits = String(phone || '').replace(/\D/g, '');
+    if (digits.length < 7) throw Object.assign(new Error('Enter the full number with country code'), { status: 400 });
+    let jid = digits + PN_SUFFIX, exists = null;
+    try {
+      const r = await acc.sock.onWhatsApp(digits);
+      const hit = Array.isArray(r) ? r.find(x => x.exists) : null;
+      exists = !!hit; if (hit?.jid) jid = await pnJid(acc, hit.jid) || jid;
+    } catch (_) {}
+    if (exists === false) throw Object.assign(new Error('That number is not on WhatsApp'), { status: 404 });
+    return { jid, name: null, exists, isGroup: false };
+  }
+
   async function profilePicture(accountId, jid) {
     const acc = requireOpen(accountId);
     try { return { url: await acc.sock.profilePictureUrl(jid, 'preview', 5000) }; } catch (_) { return { url: null }; }
@@ -453,7 +468,7 @@ function createWhatsAppDriver({ onEvent }) {
   // The router resumes accounts from disk; this only answers "is there WhatsApp auth state here?"
   function hasState(dir) { return fs.existsSync(path.join(dir, 'creds.json')); }
 
-  return { platform: 'whatsapp', start, status, list, stop, logout, send, forward, read, presence, requestHistory, profilePicture, hasState, shutdown, AUTH_DIR, BROWSER };
+  return { platform: 'whatsapp', start, status, list, stop, logout, send, forward, read, presence, requestHistory, profilePicture, resolve, hasState, shutdown, AUTH_DIR, BROWSER };
 }
 
 module.exports = { createWhatsAppDriver, AUTH_DIR, BROWSER, describe, unwrap };
