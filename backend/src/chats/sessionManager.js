@@ -72,7 +72,7 @@ function createSessionManager({ onEvent }) {
   return {
     start, status, list, resumeAll, shutdown,
     stop: route('stop'), logout: route('logout'), send: route('send'), forward: route('forward'), read: route('read'),
-    presence: route('presence'), requestHistory: route('requestHistory'), profilePicture: route('profilePicture'), resolve: route('resolve'),
+    presence: route('presence'), requestHistory: route('requestHistory'), profilePicture: route('profilePicture'), resolve: route('resolve'), download: route('download'), sendMedia: route('sendMedia'),
     platforms: Object.keys(drivers), AUTH_DIR, BROWSER,
   };
 }

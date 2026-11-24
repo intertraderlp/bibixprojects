@@ -106,6 +106,14 @@ function createTelegramDriver({ onEvent, authDir, logger }) {
     if (/WebPage/.test(cn)) return 'text';
     return 'other';
   }
+  function mediaOf(m, kind) {
+    if (!m.media || kind === 'text' || kind === 'other' || kind === 'contact' || kind === 'location' || kind === 'poll') return null;
+    const doc = m.media.document; const attrs = doc?.attributes || [];
+    const fn = attrs.find(a => /FileName/.test(a.className))?.fileName || null;
+    const vid = attrs.find(a => /Video/.test(a.className)); const img = m.media.photo?.sizes?.slice(-1)[0];
+    return { type: kind, mimetype: doc?.mimeType || (kind === 'image' ? 'image/jpeg' : null), fileName: fn, fileLength: doc ? Number(doc.size) : null,
+      width: vid?.w || img?.w || null, height: vid?.h || img?.h || null, seconds: vid?.duration || null, tgId: m.id };
+  }
   async function normMessage(acc, m, chatJid) {
     if (!m || m.className === 'MessageService' || m.action) return null;
     chatJid = chatJid || chatJidOfMessage(acc, m);
@@ -119,7 +127,7 @@ function createTelegramDriver({ onEvent, authDir, logger }) {
     const replyId = m.replyTo?.replyToMsgId;
     return {
       id: msgIdOf(chatJid, m.id), chatJid, fromMe: !!m.out, senderJid: senderPid ? jidOf(senderPid) : null, senderName,
-      text: m.message || '', kind, status: m.out ? (m.id <= readMax ? 4 : 2) : 0, timestamp: ts(m.date),
+      text: m.message || '', kind, media: mediaOf(m, kind), status: m.out ? (m.id <= readMax ? 4 : 2) : 0, timestamp: ts(m.date),
       quoted: replyId ? { id: msgIdOf(chatJid, replyId), text: '' } : null, forwarded: !!m.fwdFrom, isGroup,
     };
   }
@@ -352,11 +360,28 @@ function createTelegramDriver({ onEvent, authDir, logger }) {
     acc.names.set(pid, name);
     return { jid: jidOf(pid), name, exists: true, isGroup: !!entity.title };
   }
+  async function download(id, { jid, msgId, media }) {
+    const acc = requireOpen(id);
+    const msgs = await acc.client.getMessages(await entityFor(acc, jid), { ids: [numOf(msgId)] });
+    const m = msgs?.[0]; if (!m?.media) throw Object.assign(new Error('Media no longer available'), { status: 404 });
+    const buf = await acc.client.downloadMedia(m, {});
+    if (!buf) throw Object.assign(new Error('Download failed'), { status: 502 });
+    return { buffer: Buffer.from(buf), mimetype: media?.mimetype || (m.media.photo ? 'image/jpeg' : 'application/octet-stream') };
+  }
+  async function sendMedia(id, { jid, buffer, mimetype, fileName, caption, kind, quoted }) {
+    const acc = requireOpen(id);
+    if (!jid || !buffer?.length) throw Object.assign(new Error('jid and file required'), { status: 400 });
+    const file = Buffer.from(buffer); file.name = fileName || ('file.' + ((mimetype || '').split('/')[1] || 'bin').replace('jpeg', 'jpg'));
+    const asDoc = !(kind === 'image' || kind === 'video' || /^image\/(jpeg|png)/.test(mimetype || '') || /^video\/mp4/.test(mimetype || ''));
+    const m = await acc.client.sendFile(await entityFor(acc, jid), { file, caption: caption || undefined, forceDocument: asDoc, replyTo: quoted?.id ? numOf(quoted.id) : undefined });
+    const n = await normMessage(acc, m, jid);
+    return n || { id: msgIdOf(jid, m?.id || Date.now()), chatJid: jid, fromMe: true, text: caption || '', kind: kind || 'document', status: 2, timestamp: Date.now() };
+  }
   function hasState(dir) { return fs.existsSync(path.join(dir, 'telegram.session')); }
   async function resume({ accountId, userId }) { const acc = await start({ accountId, userId }); const a = get(accountId); if (a) a.resumed = true; return acc; }
   async function shutdown() { for (const acc of accounts.values()) { try { await acc.client?.disconnect(); } catch (_) {} } }
 
-  return { platform: 'telegram', start, resume, status, list, stop, logout, send, forward, read, presence, requestHistory, profilePicture, resolve, hasState, shutdown, isTgJid };
+  return { platform: 'telegram', start, resume, status, list, stop, logout, send, forward, read, presence, requestHistory, profilePicture, resolve, download, sendMedia, hasState, shutdown, isTgJid };
 }
 
 module.exports = { createTelegramDriver, isTgJid, jidOf, peerOf };

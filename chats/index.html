@@ -12,7 +12,7 @@
 <link rel="icon" href="/chats/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/chats/icon-192.png">
 <title>Bibix Chats</title>
-<link rel="stylesheet" href="/chats/style.css?v=3">
+<link rel="stylesheet" href="/chats/style.css?v=4">
 </head>
 <body>
 <div id="app">
@@ -66,7 +66,11 @@
       <div id="typing" class="typing hidden"></div>
       <footer class="composer">
         <div id="reply-bar" class="reply-bar hidden"><div class="reply-q"><b id="reply-who">Reply</b><span id="reply-text"></span></div><span class="act" id="reply-cancel" title="Cancel reply">✕</span></div>
+        <div id="attach-strip" class="attach-strip hidden"></div>
         <div class="composer-row">
+          <button class="icon" id="btn-attach" title="Attach photos, videos or files (or paste / drop them)">📎</button>
+          <input type="file" id="attach-input" multiple accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip" hidden>
+          <button class="icon" id="btn-emoji" title="Emoji">😊</button>
           <button class="icon" id="btn-qa" title="Quick answers (Ctrl/⌘+Shift+Q) — click: insert to edit · second click/➤: translate &amp; send">⚡</button>
           <textarea id="draft" rows="1" placeholder="Message…"></textarea>
           <button class="btn primary" id="btn-send" title="Translate the draft and send (Enter / Ctrl+Shift+Enter)">Translate &amp; send</button>
@@ -130,6 +134,18 @@
     <div class="callp-head"><span>🎙 Live captions</span><span class="callp-state" id="callp-state">starting…</span><span class="act" id="callp-close" title="Stop">✕</span></div>
     <div class="callp-lines" id="callp-lines"></div>
     <div class="callp-foot muted">Put the call on speaker; what is heard is transcribed and translated into <span id="callp-lang"></span>. Nothing is sent into the call.</div>
+  </div>
+
+  <!-- Emoji picker -->
+  <div id="emoji-panel" class="emoji hidden">
+    <div class="emoji-tabs" id="emoji-tabs"></div>
+    <div class="emoji-grid" id="emoji-grid"></div>
+  </div>
+
+  <!-- Lightbox -->
+  <div id="lightbox" class="lightbox hidden">
+    <div class="lb-bar"><a id="lb-dl" class="act" download title="Download">⬇</a><span class="act" id="lb-close" title="Close (Esc)">✕</span></div>
+    <div class="lb-body" id="lb-body"></div>
   </div>
 
   <!-- Quick answers panel -->
@@ -241,6 +257,6 @@
 
   <div id="toast" class="toast hidden"></div>
 </div>
-<script src="/chats/app.js?v=3"></script>
+<script src="/chats/app.js?v=4"></script>
 </body>
 </html>

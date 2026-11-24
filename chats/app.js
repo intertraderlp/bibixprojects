@@ -306,7 +306,7 @@
 
   async function openChat(jid) {
     if (!S.account) return;
-    S.jid = jid; S.messages = []; S.oldestTs = null; S.trState.clear(); S.hiddenTr.clear(); clearReply(); closeMenus();
+    S.jid = jid; S.messages = []; S.oldestTs = null; S.trState.clear(); S.hiddenTr.clear(); clearReply(); closeMenus(); ATT.files = []; renderAttachments();
     $('#s-main').classList.add('in-thread'); $('#pane-thread').classList.remove('hidden'); $('#thread-placeholder').classList.add('hidden');
     history.replaceState(null, '', `/chats/?account=${S.account.id}&chat=${encodeURIComponent(jid)}`);
     renderChatList(); renderThreadHead(); syncBar();
@@ -353,13 +353,30 @@
       else if (m.translation) notes += `<div class="tr"><span class="tag">${esc(m.translation_lang ? m.translation_lang + ' → ' + (m.translation_target || S.settings.myLanguage) : (m.translation_target || S.settings.myLanguage))}</span>${esc(m.translation)}<span class="act" data-hide="${m.id}" title="Hide">✕</span></div>`;
     }
     if (m.from_me && m.original_text && S.settings.showOriginalOutgoing) notes += `<div class="tr orig"><span class="tag">you wrote</span>${esc(m.original_text)}</div>`;
-    const body = m.text ? esc(m.text) : `<span class="media">${esc(kindText[m.kind] || kindText.other)}</span>`;
-    const caption = m.text && m.kind !== 'text' && m.kind !== 'call' ? `<div class="media">${esc(kindText[m.kind] || '')}</div>` : '';
+    let body = m.text ? esc(m.text) : `<span class="media">${esc(kindText[m.kind] || kindText.other)}</span>`;
+    let caption = m.text && m.kind !== 'text' && m.kind !== 'call' ? `<div class="media">${esc(kindText[m.kind] || '')}</div>` : '';
+    if (m.media) {
+      const u = mediaUrl(m); const md = m.media;
+      const cap = m.text ? `<div class="cap">${esc(m.text)}</div>` : '';
+      if (md.type === 'image' || md.type === 'sticker') { body = `<img class="mimg" src="${u}" loading="lazy" alt="" data-lb="${m.id}"${md.thumb ? ` style="background-image:url(${md.thumb})"` : ''}${md.width && md.height ? ` width="${Math.min(320, md.width)}" height="${Math.round(Math.min(320, md.width) * md.height / md.width)}"` : ''}>${cap}`; caption = ''; }
+      else if (md.type === 'video') { body = `<video controls preload="none" playsinline src="${u}"${md.thumb ? ` poster="${md.thumb}"` : ''}></video>${cap}`; caption = ''; }
+      else if (md.type === 'audio') { body = `<audio controls preload="none" src="${u}"></audio>${cap}`; caption = ''; }
+      else if (md.type === 'document') { body = `<a class="doc" href="${u}&download=1" target="_blank" rel="noopener">📄<span><span class="nm">${esc(md.fileName || 'File')}</span><small>${md.fileLength ? fmtSize(md.fileLength) : ''}</small></span></a>${m.text && m.text !== md.fileName ? cap : ''}`; caption = ''; }
+    }
     const q = m.quoted ? { ...m.quoted, text: m.quoted.text || S.messages.find(x => x.msg_id === m.quoted.id)?.text || '…' } : null;
     return `<div class="msg ${m.from_me ? 'out' : 'in'}${m.kind === 'call' ? ' call' : ''}" data-id="${m.id}" data-ts="${m.timestamp}">
       <div class="bubble">${m.forwarded ? '<div class="fwd">↪ Forwarded</div>' : ''}${c?.is_group && !m.from_me && m.sender_name ? `<div class="sender">${esc(m.sender_name)}</div>` : ''}${q ? `<div class="quoted" data-goto="${esc(q.id || '')}">${esc(q.text)}</div>` : ''}${caption}${body}<div class="meta">${new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} ${ticks(m)}</div></div>
       ${notes}${m.text && m.kind !== 'call' ? `<span class="tbtn" data-tr="${m.id}" title="Translate this message → ${esc(S.settings.myLanguage)}">🌐</span>` : ''}</div>`;
   }
+  const mediaUrl = (m) => `/api/chats/messages/${m.id}/media?token=${encodeURIComponent(S.token)}`;
+  const fmtSize = (n) => n < 1024 ? n + ' B' : n < 1048576 ? (n / 1024).toFixed(0) + ' KB' : (n / 1048576).toFixed(1) + ' MB';
+  function openLightbox(m) {
+    const u = mediaUrl(m); const b = $('#lb-body');
+    b.innerHTML = m.media.type === 'video' ? `<video controls autoplay playsinline src="${u}"></video>` : `<img src="${u}" alt="">`;
+    $('#lb-dl').href = u + '&download=1'; $('#lightbox').classList.remove('hidden');
+  }
+  $('#lb-close').addEventListener('click', () => { $('#lightbox').classList.add('hidden'); $('#lb-body').innerHTML = ''; });
+  $('#lb-body').addEventListener('click', e => { if (e.target === e.currentTarget) $('#lb-close').click(); });
   function renderMessages(scrollBottom) {
     const box = $('#messages'); const inner = $('#messages-inner');
     const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 80;
@@ -385,6 +402,8 @@
     const b = e.target.closest('[data-tr]'); if (b) { toggleTranslate(b.dataset.tr); return; }
     if (e.target.id === 'btn-earlier') { loadEarlier(); return; }
     const g = e.target.closest('[data-goto]'); if (g && g.dataset.goto) { e.stopPropagation(); if (gotoMessage(g.dataset.goto)) return; }
+    const lb = e.target.closest('[data-lb]'); if (lb) { const m = S.messages.find(x => x.id === lb.dataset.lb); if (m?.media) { openLightbox(m); return; } }
+    if (e.target.closest('video, audio, a.doc')) return;
     const bub = e.target.closest('.bubble'); if (bub) { const el = bub.closest('.msg'); if (el) openMsgMenu(el.dataset.id, e); }
   });
   function gotoMessage(msgId) {
@@ -645,7 +664,7 @@
   draft.addEventListener('keydown', e => {
     if (e.key === 'Enter' && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && !e.isComposing) {
       if (S.settings.enterTranslates === false && S.enabled) return; // plain Enter = newline when the option is off
-      if (!norm(draft.value)) return;
+      if (!norm(draft.value) && !ATT.files.length) return;
       e.preventDefault(); translateDraft(true); return;
     }
     if (!(e.ctrlKey || e.metaKey) || !e.shiftKey) return;
@@ -654,16 +673,105 @@
     else if (e.key.toLowerCase() === 'u') { e.preventDefault(); undoDraft(); }
     else if (e.key.toLowerCase() === 'q') { e.preventDefault(); toggleQA(); }
   });
-  document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'q' && S.jid) { e.preventDefault(); toggleQA(); } if (e.key === 'Escape') { toggleQA(false); closeMenus(); if (S.replyTo) clearReply(); for (const m of $$('.modal')) if (!m.classList.contains('hidden')) closeModal(m.id); } });
+  document.addEventListener('keydown', e => { if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'q' && S.jid) { e.preventDefault(); toggleQA(); } if (e.key === 'Escape') { toggleQA(false); closeMenus(); if (S.replyTo) clearReply(); $('#lightbox').classList.add('hidden'); $('#emoji-panel').classList.add('hidden'); for (const m of $$('.modal')) if (!m.classList.contains('hidden')) closeModal(m.id); } });
   $('#btn-send').addEventListener('click', () => translateDraft(true));
   $('#btn-inplace').addEventListener('click', () => translateDraft(false));
   $('#btn-undo').addEventListener('click', undoDraft);
-  $('#btn-raw').addEventListener('click', () => sendText(draft.value.trim(), null));
+  $('#btn-raw').addEventListener('click', () => ATT.files.length ? sendAttachments(draft.value.trim(), null) : sendText(draft.value.trim(), null));
+
+  // ── Attachments: 📎, paste, drag & drop ─────────────────────────────────────
+  const ATT = { files: [] };
+  function addFiles(list) {
+    for (const f of list || []) { if (!f || !f.size) continue; if (f.size > 80 * 1024 * 1024) { toast(`${f.name || 'File'} is over 80 MB`); continue; } if (ATT.files.length >= 10) { toast('Up to 10 files per message'); break; } ATT.files.push(f); }
+    renderAttachments(); if (ATT.files.length) draft.focus();
+  }
+  function renderAttachments() {
+    const strip = $('#attach-strip');
+    strip.classList.toggle('hidden', !ATT.files.length);
+    for (const u of strip.querySelectorAll('[data-url]')) URL.revokeObjectURL(u.dataset.url);
+    strip.innerHTML = ATT.files.map((f, i) => {
+      const url = URL.createObjectURL(f);
+      const inner = /^image\//.test(f.type) ? `<img src="${url}" alt="" data-url="${url}">` : /^video\//.test(f.type) ? `<video src="${url}" muted data-url="${url}"></video>` : `<span class="nm">📄 ${esc(f.name || 'file')}</span>`;
+      return `<div class="att">${inner}<span class="x" data-rm="${i}" title="Remove">✕</span></div>`;
+    }).join('');
+    $('#btn-send').textContent = ATT.files.length ? (S.enabled && norm(draft.value) ? 'Translate & send' : 'Send') : (S.enabled ? 'Translate & send' : 'Send');
+  }
+  $('#attach-strip').addEventListener('click', e => { const x = e.target.closest('[data-rm]'); if (x) { ATT.files.splice(Number(x.dataset.rm), 1); renderAttachments(); } });
+  $('#btn-attach').addEventListener('click', () => { if (!S.jid) return toast('Open a chat first'); $('#attach-input').click(); });
+  $('#attach-input').addEventListener('change', e => { addFiles([...e.target.files]); e.target.value = ''; });
+  document.addEventListener('paste', e => {
+    if (!S.jid || $('#m-settings').matches(':not(.hidden)')) return;
+    const files = [...(e.clipboardData?.items || [])].filter(it => it.kind === 'file').map(it => it.getAsFile()).filter(Boolean);
+    if (!files.length) return;
+    e.preventDefault();
+    addFiles(files.map((f, i) => f.name && f.name !== 'image.png' ? f : new File([f], `screenshot-${Date.now()}-${i}.${(f.type.split('/')[1] || 'png').replace('jpeg', 'jpg')}`, { type: f.type })));
+    toast(files.length === 1 ? 'Screenshot attached — add a caption and send' : `${files.length} files attached`);
+  });
+  const pane = $('#pane-thread'); let dragDepth = 0;
+  pane.addEventListener('dragenter', e => { if (e.dataTransfer?.types?.includes('Files')) { dragDepth++; pane.classList.add('dropping'); } });
+  pane.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; pane.classList.remove('dropping'); } });
+  pane.addEventListener('dragover', e => { if (e.dataTransfer?.types?.includes('Files')) e.preventDefault(); });
+  pane.addEventListener('drop', e => { e.preventDefault(); dragDepth = 0; pane.classList.remove('dropping'); if (S.jid) addFiles([...e.dataTransfer.files]); });
+  async function sendAttachments(caption, original) {
+    const files = ATT.files.slice(); if (!files.length || !S.jid) return;
+    const fd = new FormData();
+    for (const f of files) fd.append('files', f, f.name || 'file');
+    fd.append('caption', caption || ''); if (original) fd.append('original', original); if (S.replyTo) fd.append('quoted', S.replyTo.id);
+    status(`Sending ${files.length} file${files.length > 1 ? 's' : ''}…`, 'busy'); $('#btn-send').disabled = true;
+    try {
+      const r = await fetch(`/api/chats/accounts/${S.account.id}/chats/${encodeURIComponent(S.jid)}/media`, { method: 'POST', headers: { Authorization: 'Bearer ' + S.token }, body: fd });
+      const d = await r.json().catch(() => ({})); if (!r.ok) throw new Error(d.error || 'HTTP ' + r.status);
+      ATT.files = []; renderAttachments(); draft.value = ''; autosize(); S.lastDraft = null; $('#btn-undo').classList.add('hidden'); clearReply();
+      for (const m of d.messages || []) upsertLocal(m, true);
+      status('Sent', 'ok');
+    } catch (e) { status(e.message, 'err'); }
+    finally { $('#btn-send').disabled = false; }
+  }
+
+  // ── Emoji picker ────────────────────────────────────────────────────────────
+  const EMOJI = {
+    '🕘': [], // recent, filled at runtime
+    '😀': '😀 😃 😄 😁 😆 😅 🤣 😂 🙂 😉 😊 😇 🥰 😍 🤩 😘 😗 😚 😙 🥲 😋 😛 😜 🤪 😝 🤑 🤗 🤭 🤫 🤔 🫡 🤐 🤨 😐 😑 😶 😏 😒 🙄 😬 🤥 😌 😔 😪 🤤 😴 😷 🤒 🤕 🤢 🤮 🥵 🥶 🥴 😵 🤯 🤠 🥳 🥸 😎 🤓 🧐 😕 🫤 😟 🙁 😮 😯 😲 😳 🥺 🥹 😦 😧 😨 😰 😥 😢 😭 😱 😖 😣 😞 😓 😩 😫 🥱 😤 😡 😠 🤬 😈 💀 💩 🤡 👹 👻 👽 🤖 😺 😸 😹 😻 😼 😽 🙀 😿 😾',
+    '👋': '👋 🤚 🖐 ✋ 🖖 🫱 🫲 👌 🤌 🤏 ✌️ 🤞 🫰 🤟 🤘 🤙 👈 👉 👆 🖕 👇 ☝️ 🫵 👍 👎 ✊ 👊 🤛 🤜 👏 🙌 🫶 👐 🤲 🤝 🙏 ✍️ 💅 🤳 💪 🦾 🦵 🦶 👂 👃 🧠 🫀 🫁 🦷 👀 👁 👅 👄 🫦 👶 👧 🧒 👦 👩 🧑 👨 👱‍♀️ 👱 🧔 👵 🧓 👴 🙍 🙎 🙅 🙆 💁 🙋 🧏 🙇 🤦 🤷 👮 💂 🕵️ 👷 🤴 👸 👳 👲 🧕 🤵 👰 🤰 🤱 👼 🎅 🤶 🦸 🦹 🧙 🧚 🧛 🧜 🧝 🧞 🧟 💆 💇 🚶 🧍 🧎 🏃 💃 🕺 🕴 👯 🧖 🧗 🏇 ⛷ 🏂 🏌️ 🏄 🚣 🏊 ⛹️ 🏋️ 🚴 🚵 🤸 🤼 🤽 🤾 🤹 🧘 🛀 🛌 👭 👫 👬 💏 💑 👪 ❤️ 🧡 💛 💚 💙 💜 🖤 🤍 🤎 💔 ❣️ 💕 💞 💓 💗 💖 💘 💝 💟',
+    '🐶': '🐶 🐱 🐭 🐹 🐰 🦊 🐻 🐼 🐨 🐯 🦁 🐮 🐷 🐸 🐵 🙈 🙉 🙊 🐔 🐧 🐦 🐤 🦆 🦅 🦉 🦇 🐺 🐗 🐴 🦄 🐝 🪱 🐛 🦋 🐌 🐞 🐜 🦟 🪳 🪲 🦗 🕷 🦂 🐢 🐍 🦎 🦖 🦕 🐙 🦑 🦐 🦞 🦀 🐡 🐠 🐟 🐬 🐳 🐋 🦈 🐊 🐅 🐆 🦓 🦍 🦧 🐘 🦛 🦏 🐪 🐫 🦒 🦘 🦬 🐃 🐂 🐄 🐎 🐖 🐏 🐑 🦙 🐐 🦌 🐕 🐩 🦮 🐈 🐓 🦃 🦤 🦚 🦜 🦢 🦩 🕊 🐇 🦝 🦨 🦡 🦫 🦦 🦥 🐁 🐀 🐿 🦔 🌵 🎄 🌲 🌳 🌴 🪵 🌱 🌿 ☘️ 🍀 🎍 🪴 🎋 🍃 🍂 🍁 🍄 🐚 🪨 🌾 💐 🌷 🌹 🥀 🌺 🌸 🌼 🌻 🌞 🌝 🌛 🌜 🌚 🌕 🌖 🌗 🌘 🌑 🌒 🌓 🌔 🌙 🌎 🌍 🌏 🪐 💫 ⭐️ 🌟 ✨ ⚡️ ☄️ 💥 🔥 🌪 🌈 ☀️ 🌤 ⛅️ 🌥 ☁️ 🌦 🌧 ⛈ 🌩 🌨 ❄️ ☃️ ⛄️ 🌬 💨 💧 💦 ☔️ ☂️ 🌊 🌫',
+    '🍎': '🍏 🍎 🍐 🍊 🍋 🍌 🍉 🍇 🍓 🫐 🍈 🍒 🍑 🥭 🍍 🥥 🥝 🍅 🍆 🥑 🥦 🥬 🥒 🌶 🫑 🌽 🥕 🫒 🧄 🧅 🥔 🍠 🥐 🥯 🍞 🥖 🥨 🧀 🥚 🍳 🧈 🥞 🧇 🥓 🥩 🍗 🍖 🦴 🌭 🍔 🍟 🍕 🫓 🥪 🥙 🧆 🌮 🌯 🫔 🥗 🥘 🫕 🥫 🍝 🍜 🍲 🍛 🍣 🍱 🥟 🦪 🍤 🍙 🍚 🍘 🍥 🥠 🥮 🍢 🍡 🍧 🍨 🍦 🥧 🧁 🍰 🎂 🍮 🍭 🍬 🍫 🍿 🍩 🍪 🌰 🥜 🫘 🍯 🥛 🍼 🫖 ☕️ 🍵 🧃 🥤 🧋 🍶 🍺 🍻 🥂 🍷 🥃 🍸 🍹 🧉 🍾 🧊 🥄 🍴 🍽 🥣 🥡 🥢 🧂',
+    '⚽': '⚽️ 🏀 🏈 ⚾️ 🥎 🎾 🏐 🏉 🥏 🎱 🪀 🏓 🏸 🏒 🏑 🥍 🏏 🪃 🥅 ⛳️ 🪁 🏹 🎣 🤿 🥊 🥋 🎽 🛹 🛼 🛷 ⛸ 🥌 🎿 ⛷ 🏂 🪂 🏋️ 🤼 🤸 ⛹️ 🤺 🤾 🏌️ 🏇 🧘 🏄 🏊 🤽 🚣 🧗 🚵 🚴 🏆 🥇 🥈 🥉 🏅 🎖 🏵 🎗 🎫 🎟 🎪 🤹 🎭 🩰 🎨 🎬 🎤 🎧 🎼 🎹 🥁 🪘 🎷 🎺 🪗 🎸 🪕 🎻 🎲 ♟ 🎯 🎳 🎮 🎰 🧩 🚗 🚕 🚙 🚌 🚎 🏎 🚓 🚑 🚒 🚐 🛻 🚚 🚛 🚜 🦯 🦽 🦼 🛴 🚲 🛵 🏍 🛺 🚨 🚔 🚍 🚘 🚖 🛞 🚡 🚠 🚟 🚃 🚋 🚞 🚝 🚄 🚅 🚈 🚂 🚆 🚇 🚊 🚉 ✈️ 🛫 🛬 🛩 💺 🛰 🚀 🛸 🚁 🛶 ⛵️ 🚤 🛥 🛳 ⛴ 🚢 ⚓️ 🪝 ⛽️ 🚧 🚦 🚥 🚏 🗺 🗿 🗽 🗼 🏰 🏯 🏟 🎡 🎢 🎠 ⛲️ ⛱ 🏖 🏝 🏜 🌋 ⛰ 🏔 🗻 🏕 ⛺️ 🛖 🏠 🏡 🏘 🏚 🏗 🏭 🏢 🏬 🏣 🏤 🏥 🏦 🏨 🏪 🏫 🏩 💒 🏛 ⛪️ 🕌 🕍 🛕 🕋 ⛩ 🛤 🛣 🗾 🎑 🏞 🌅 🌄 🌠 🎇 🎆 🌇 🌆 🏙 🌃 🌌 🌉 🌁',
+    '💡': '⌚️ 📱 📲 💻 ⌨️ 🖥 🖨 🖱 🖲 🕹 🗜 💽 💾 💿 📀 📼 📷 📸 📹 🎥 📽 🎞 📞 ☎️ 📟 📠 📺 📻 🎙 🎚 🎛 🧭 ⏱ ⏲ ⏰ 🕰 ⌛️ ⏳ 📡 🔋 🪫 🔌 💡 🔦 🕯 🪔 🧯 🛢 💸 💵 💴 💶 💷 🪙 💰 💳 💎 ⚖️ 🪜 🧰 🪛 🔧 🔨 ⚒ 🛠 ⛏ 🪚 🔩 ⚙️ 🪤 🧱 ⛓ 🧲 🔫 💣 🧨 🪓 🔪 🗡 ⚔️ 🛡 🚬 ⚰️ 🪦 ⚱️ 🏺 🔮 📿 🧿 🪬 💈 ⚗️ 🔭 🔬 🕳 🩹 🩺 💊 💉 🩸 🧬 🦠 🧫 🧪 🌡 🧹 🪠 🧺 🧻 🚽 🚰 🚿 🛁 🛀 🧼 🪥 🪒 🧽 🪣 🧴 🛎 🔑 🗝 🚪 🪑 🛋 🛏 🛌 🧸 🪆 🖼 🪞 🪟 🛍 🛒 🎁 🎈 🎏 🎀 🪄 🪅 🎊 🎉 🎎 🏮 🎐 🧧 ✉️ 📩 📨 📧 💌 📥 📤 📦 🏷 🪧 📪 📫 📬 📭 📮 📯 📜 📃 📄 📑 🧾 📊 📈 📉 🗒 🗓 📆 📅 🗑 📇 🗃 🗳 🗄 📋 📁 📂 🗂 🗞 📰 📓 📔 📒 📕 📗 📘 📙 📚 📖 🔖 🧷 🔗 📎 🖇 📐 📏 🧮 📌 📍 ✂️ 🖊 🖋 ✒️ 🖌 🖍 📝 ✏️ 🔍 🔎 🔏 🔐 🔒 🔓',
+    '❤️': '❤️ 🧡 💛 💚 💙 💜 🖤 🤍 🤎 💔 ❤️‍🔥 ❤️‍🩹 ❣️ 💕 💞 💓 💗 💖 💘 💝 💟 ☮️ ✝️ ☪️ 🕉 ☸️ ✡️ 🔯 🕎 ☯️ ☦️ 🛐 ⛎ ♈️ ♉️ ♊️ ♋️ ♌️ ♍️ ♎️ ♏️ ♐️ ♑️ ♒️ ♓️ 🆔 ⚛️ 🉑 ☢️ ☣️ 📴 📳 🈶 🈚️ 🈸 🈺 🈷️ ✴️ 🆚 💮 🉐 ㊙️ ㊗️ 🈴 🈵 🈹 🈲 🅰️ 🅱️ 🆎 🆑 🅾️ 🆘 ❌ ⭕️ 🛑 ⛔️ 📛 🚫 💯 💢 ♨️ 🚷 🚯 🚳 🚱 🔞 📵 🚭 ❗️ ❕ ❓ ❔ ‼️ ⁉️ 🔅 🔆 〽️ ⚠️ 🚸 🔱 ⚜️ 🔰 ♻️ ✅ 🈯️ 💹 ❇️ ✳️ ❎ 🌐 💠 Ⓜ️ 🌀 💤 🏧 🚾 ♿️ 🅿️ 🛗 🈳 🈂️ 🛂 🛃 🛄 🛅 🚹 🚺 🚼 ⚧ 🚻 🚮 🎦 📶 🈁 🔣 ℹ️ 🔤 🔡 🔠 🆖 🆗 🆙 🆒 🆕 🆓 0️⃣ 1️⃣ 2️⃣ 3️⃣ 4️⃣ 5️⃣ 6️⃣ 7️⃣ 8️⃣ 9️⃣ 🔟 🔢 #️⃣ *️⃣ ⏏️ ▶️ ⏸ ⏯ ⏹ ⏺ ⏭ ⏮ ⏩ ⏪ ⏫ ⏬ ◀️ 🔼 🔽 ➡️ ⬅️ ⬆️ ⬇️ ↗️ ↘️ ↙️ ↖️ ↕️ ↔️ ↪️ ↩️ ⤴️ ⤵️ 🔀 🔁 🔂 🔄 🔃 🎵 🎶 ➕ ➖ ➗ ✖️ 🟰 ♾ 💲 💱 ™️ ©️ ®️ 👁‍🗨 🔚 🔙 🔛 🔝 🔜 〰️ ➰ ➿ ✔️ ☑️ 🔘 🔴 🟠 🟡 🟢 🔵 🟣 ⚫️ ⚪️ 🟤 🔺 🔻 🔸 🔹 🔶 🔷 🔳 🔲 ▪️ ▫️ ◾️ ◽️ ◼️ ◻️ 🟥 🟧 🟨 🟩 🟦 🟪 ⬛️ ⬜️ 🟫 🔈 🔇 🔉 🔊 🔔 🔕 📣 📢 💬 💭 🗯 ♠️ ♣️ ♥️ ♦️ 🃏 🎴 🀄️ 🕐 🕑 🕒 🕓 🕔 🕕 🕖 🕗 🕘 🕙 🕚 🕛',
+  };
+  let emojiTab = '😀';
+  const recentEmoji = () => { try { return JSON.parse(localStorage.getItem('chats_emoji_recent') || '[]'); } catch (_) { return []; } };
+  function renderEmoji() {
+    const tabs = Object.keys(EMOJI);
+    $('#emoji-tabs').innerHTML = tabs.map(t => `<button data-t="${t}" class="${t === emojiTab ? 'on' : ''}">${t}</button>`).join('');
+    const list = emojiTab === '🕘' ? recentEmoji() : String(EMOJI[emojiTab]).split(' ').filter(Boolean);
+    $('#emoji-grid').innerHTML = list.map(e => `<span>${e}</span>`).join('') || '<span class="muted" style="grid-column:1/-1;font-size:13px;height:auto;padding:12px">No recent emoji yet</span>';
+  }
+  function insertAtCursor(txt) {
+    const s = draft.selectionStart ?? draft.value.length, e = draft.selectionEnd ?? s;
+    draft.value = draft.value.slice(0, s) + txt + draft.value.slice(e); draft.selectionStart = draft.selectionEnd = s + txt.length; autosize(); draft.focus();
+  }
+  $('#btn-emoji').addEventListener('click', () => { const p = $('#emoji-panel'); const open = p.classList.contains('hidden'); p.classList.toggle('hidden', !open); if (open) { if (recentEmoji().length && emojiTab === '😀') emojiTab = '🕘'; renderEmoji(); } });
+  $('#emoji-tabs').addEventListener('click', e => { const b = e.target.closest('[data-t]'); if (b) { emojiTab = b.dataset.t; renderEmoji(); } });
+  $('#emoji-grid').addEventListener('click', e => {
+    const s = e.target.closest('span'); if (!s || !s.textContent.trim() || s.classList.contains('muted')) return;
+    const em = s.textContent; insertAtCursor(em);
+    const r = [em, ...recentEmoji().filter(x => x !== em)].slice(0, 40); localStorage.setItem('chats_emoji_recent', JSON.stringify(r));
+  });
+  document.addEventListener('mousedown', e => { const p = $('#emoji-panel'); if (!p.classList.contains('hidden') && !p.contains(e.target) && !e.target.closest('#btn-emoji')) p.classList.add('hidden'); }, true);
 
   let sending = false;
   async function translateDraft(andSend) {
     if (sending || !S.jid) return;
-    const text = draft.value.trim(); if (!text) { status('Type a message first', 'err'); return; }
+    const text = draft.value.trim();
+    if (ATT.files.length) {
+      if (!text || !S.enabled) return sendAttachments(text, null);
+      sending = true; $('#btn-send').disabled = true;
+      try { status(`Translating caption → ${targetLang()}…`, 'busy'); const r = await api('/chats/translate', { body: { text, from: S.settings.myLanguage, to: targetLang() } }); await sendAttachments(r.text, text); }
+      catch (e) { status(e.message, 'err'); } finally { sending = false; $('#btn-send').disabled = false; }
+      return;
+    }
+    if (!text) { status('Type a message first', 'err'); return; }
     if (!S.enabled) return sendText(text, null);
     const to = targetLang();
     sending = true; $('#btn-send').disabled = $('#btn-inplace').disabled = true;

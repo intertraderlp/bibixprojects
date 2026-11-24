@@ -16,6 +16,8 @@
 //              GET    /api/chats/accounts/:id/chats/:jid/messages?before=&limit=
 //              POST   /api/chats/accounts/:id/chats/:jid/send  { text, original?, quoted? (message uuid → reply) }
 //              POST   /api/chats/messages/:id/forward          { to: [jid, …] }
+//              GET    /api/chats/messages/:id/media?token=      the image/video/audio/file itself (cached on disk after the first download)
+//              POST   /api/chats/accounts/:id/chats/:jid/media  multipart: files[] + caption, original, quoted  → send photos / videos / files
 //              POST   /api/chats/accounts/:id/chats/:jid/read
 //              PUT    /api/chats/accounts/:id/chats/:jid/prefs { send_language, send_language_detected, auto_incoming }
 //              POST   /api/chats/accounts/:id/chats/:jid/translate-recent { limit }
@@ -32,8 +34,12 @@
 //   chat:status, chat:chats, chat:message, chat:message-update, chat:translated, chat:history, chat:call
 // ─────────────────────────────────────────────────────────────────────────────
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
+const jwt = require('jsonwebtoken');
 const db = require('../db/database');
-const { authenticate } = require('../middleware/auth');
+const { authenticate, JWT_SECRET } = require('../middleware/auth');
 const sse = require('../sse');
 const store = require('../chats/store');
 const { createClient, SECRET, WORKER_URL } = require('../chats/client');
@@ -165,6 +171,38 @@ function adoptLanguage(userId, settings, accountId, jid, lang) {
 }
 const norm = (s) => (s || '').replace(/\s+/g, ' ').trim();
 
+// ── Media files: <img>/<video> tags cannot send headers, so this one endpoint takes ?token= ────
+const MEDIA_DIR = process.env.CHATS_MEDIA_DIR || path.join(__dirname, '../../data/chats-media');
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 80 * 1024 * 1024, files: 10 } });
+function mediaPath(accountId, id) { return path.join(MEDIA_DIR, accountId, id); }
+function saveMedia(accountId, id, buffer, mimetype) {
+  const p = mediaPath(accountId, id);
+  fs.mkdirSync(path.dirname(p), { recursive: true });
+  fs.writeFileSync(p + '.bin', buffer); fs.writeFileSync(p + '.mime', mimetype || 'application/octet-stream');
+  store.setMediaLocal(id, true);
+}
+router.get('/messages/:id/media', async (req, res) => {
+  let userId;
+  try { const payload = jwt.verify(String(req.query.token || ''), JWT_SECRET); userId = payload.id || payload.userId; } catch { return res.status(401).end(); }
+  const row = store.getMessage(req.params.id);
+  const acc = row && store.getUserAccount(userId, row.account_id);
+  if (!acc) return res.status(404).json({ error: 'Not found' });
+  const info = store.mediaRaw(row.id);
+  if (!info) return res.status(404).json({ error: 'No media on this message' });
+  const p = mediaPath(acc.id, row.id);
+  try {
+    if (!fs.existsSync(p + '.bin')) {
+      const r = await client.download(acc.id, { media: info, jid: row.chat_jid, msgId: row.msg_id });
+      saveMedia(acc.id, row.id, r.buffer, r.mimetype || info.mimetype);
+    }
+    const mime = fs.readFileSync(p + '.mime', 'utf8') || info.mimetype || 'application/octet-stream';
+    res.setHeader('Content-Type', mime);
+    res.setHeader('Cache-Control', 'private, max-age=31536000, immutable');
+    if (req.query.download || info.type === 'document') res.setHeader('Content-Disposition', `${req.query.download ? 'attachment' : 'inline'}; filename="${encodeURIComponent(info.fileName || row.id)}"`);
+    res.sendFile(p + '.bin');
+  } catch (e) { res.status(e.status || 502).json({ error: e.message }); }
+});
+
 // ── Internal: events from the worker process ─────────────────────────────────
 router.post('/internal/events', (req, res) => {
   if (!SECRET || req.headers['x-chats-secret'] !== SECRET) return res.status(401).json({ error: 'bad secret' });
@@ -266,6 +304,28 @@ router.post('/accounts/:id/chats/:jid/send', wrap(async (req) => {
   sse.emit(req.user.id, 'chat:message', { account_id: req.params.id, message: row, chat: store.getChat(req.params.id, req.params.jid), live: false, inserted: true });
   return row;
 }));
+router.post('/accounts/:id/chats/:jid/media', upload.array('files', 10), wrap(async (req) => {
+  myAccount(req);
+  const files = req.files || [];
+  if (!files.length) throw Object.assign(new Error('No file received'), { status: 400 });
+  const caption = String(req.body?.caption || '').trim();
+  let quoted = null;
+  if (req.body?.quoted) { const q = store.getMessage(req.body.quoted); if (q && q.account_id === req.params.id) quoted = { id: q.msg_id, chatJid: q.chat_jid, fromMe: q.from_me, senderJid: q.sender_jid, text: q.text, kind: q.kind }; }
+  const rows = [];
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    const mt = f.mimetype || 'application/octet-stream';
+    const kind = /^image\/(jpeg|png|webp|gif)/.test(mt) ? 'image' : /^video\//.test(mt) ? 'video' : /^audio\//.test(mt) ? 'audio' : 'document';
+    const sent = await client.sendMedia(req.params.id, { jid: req.params.jid, buffer: f.buffer, mimetype: mt, fileName: f.originalname, caption: i === 0 ? caption : '', kind, quoted: i === 0 ? quoted : null });
+    const media = sent.media || { type: kind, mimetype: mt, fileName: f.originalname, fileLength: f.size };
+    const { row } = store.upsertMessage(req.params.id, { ...sent, media, chatJid: sent.chatJid || req.params.jid, fromMe: true, text: sent.text || (i === 0 ? caption : ''), originalText: i === 0 && req.body?.original && req.body.original !== caption ? req.body.original : null, status: Math.max(1, sent.status || 1) });
+    if (!row) continue;
+    saveMedia(req.params.id, row.id, f.buffer, mt);     // the sender's own copy: no download needed to show it
+    const shaped = store.getMessage(row.id); rows.push(shaped);
+    sse.emit(req.user.id, 'chat:message', { account_id: req.params.id, message: shaped, chat: store.getChat(req.params.id, req.params.jid), live: false, inserted: true });
+  }
+  return { ok: true, messages: rows };
+}));
 router.post('/messages/:id/forward', wrap(async (req) => {
   const row = store.getMessage(req.params.id);
   if (!row) throw Object.assign(new Error('Message not found'), { status: 404 });
@@ -274,7 +334,7 @@ router.post('/messages/:id/forward', wrap(async (req) => {
   const to = [...new Set((req.body?.to || []).map(String).filter(Boolean))].slice(0, 20);
   if (!to.length) throw Object.assign(new Error('Pick at least one chat'), { status: 400 });
   if (row.kind === 'call') throw Object.assign(new Error('Call entries cannot be forwarded'), { status: 400 });
-  const sent = await client.forward(acc.id, { toJids: to, message: { id: row.msg_id, chatJid: row.chat_jid, fromMe: row.from_me, senderJid: row.sender_jid, text: row.text, kind: row.kind } });
+  const sent = await client.forward(acc.id, { toJids: to, message: { id: row.msg_id, chatJid: row.chat_jid, fromMe: row.from_me, senderJid: row.sender_jid, text: row.text, kind: row.kind, media: store.mediaRaw(row.id) } });
   const rows = [];
   for (const m of sent) {
     const { row: r } = store.upsertMessage(acc.id, { ...m, fromMe: true, forwarded: true, status: Math.max(1, m.status || 1) });
