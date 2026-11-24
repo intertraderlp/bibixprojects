@@ -96,9 +96,44 @@ async function translate({ userId, settings, text, from = 'auto', to, detect = f
   return result;
 }
 
+// ── Speech → text (call captions). Groq Whisper (free) or OpenAI, whichever has a key. ──
+const STT = {
+  groq:   { url: 'https://api.groq.com/openai/v1/audio/transcriptions', model: 'whisper-large-v3-turbo' },
+  openai: { url: 'https://api.openai.com/v1/audio/transcriptions',      model: 'gpt-4o-mini-transcribe' },
+};
+function resolveStt(userId, settings) {
+  const rows = db.prepare('SELECT provider, api_key FROM user_ai_providers WHERE user_id = ? AND provider IN (?, ?)').all(userId, 'groq', 'openai');
+  const order = [settings?.sttProvider, 'groq', 'openai'].filter(Boolean);
+  for (const p of order) {
+    const key = rows.find(r => r.provider === p)?.api_key || process.env[ENV_KEY[p]];
+    if (key && STT[p]) return { provider: p, apiKey: key, ...STT[p] };
+  }
+  return null;
+}
+// transcribe({ userId, settings, audio (base64), mime, language?, prompt? }) → { text, provider }
+async function transcribe({ userId, settings, audio, mime = 'audio/wav', language, prompt }) {
+  if (!audio) throw Object.assign(new Error('audio required'), { status: 400 });
+  const p = resolveStt(userId, settings);
+  if (!p) throw Object.assign(new Error('Call captions need a Groq (free) or OpenAI key — add one in Bibix → Settings → AI providers'), { status: 412 });
+  const bytes = Buffer.from(audio, 'base64');
+  if (bytes.length > 24 * 1024 * 1024) throw Object.assign(new Error('audio chunk too large'), { status: 413 });
+  const ext = /wav/.test(mime) ? 'wav' : /webm/.test(mime) ? 'webm' : /mp4|m4a|aac/.test(mime) ? 'mp4' : /ogg|opus/.test(mime) ? 'ogg' : 'wav';
+  const fd = new FormData();
+  fd.append('file', new Blob([bytes], { type: mime }), 'chunk.' + ext);
+  fd.append('model', p.model);
+  fd.append('response_format', 'json');
+  if (language) fd.append('language', language);
+  if (prompt) fd.append('prompt', prompt);
+  const r = await fetch(p.url, { method: 'POST', headers: { Authorization: 'Bearer ' + p.apiKey }, body: fd });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j?.error?.message || `${p.provider} ${r.status}`);
+  return { text: String(j?.text || '').trim(), provider: p.provider };
+}
+function sttInfo(userId, settings) { const p = resolveStt(userId, settings); return p ? { provider: p.provider, model: p.model } : null; }
+
 function providerInfo(userId, settings) {
   const p = resolveProvider(userId, settings);
   return p ? { provider: p.provider, model: p.model, display: p.display } : null;
 }
 
-module.exports = { translate, buildSystemPrompt, resolveProvider, providerInfo, LANGUAGES, CHAT_DEFAULT_MODEL, listProviders };
+module.exports = { translate, transcribe, sttInfo, buildSystemPrompt, resolveProvider, providerInfo, LANGUAGES, CHAT_DEFAULT_MODEL, listProviders };

@@ -90,6 +90,13 @@ db.exec(`
   );
 `);
 
+// Columns added after the first release (CREATE TABLE IF NOT EXISTS does not add them to existing DBs).
+function addColumn(table, col, def) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
+  if (!cols.includes(col)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${def}`);
+}
+addColumn('chat_messages', 'forwarded', 'INTEGER NOT NULL DEFAULT 0');
+
 const now = () => Date.now();
 
 // ── accounts ─────────────────────────────────────────────────────────────────
@@ -143,6 +150,7 @@ function shapeChat(r) {
   };
 }
 function listChats(accountId, { archived = 0, limit = 500 } = {}) {
+  if (archived === 'all') return db.prepare(`${CHAT_SELECT} WHERE c.account_id = ? ORDER BY c.archived ASC, c.pinned DESC, COALESCE(c.last_message_at, 0) DESC LIMIT ?`).all(accountId, limit).map(shapeChat);
   return db.prepare(`${CHAT_SELECT} WHERE c.account_id = ? AND c.archived = ? ORDER BY c.pinned DESC, COALESCE(c.last_message_at, 0) DESC LIMIT ?`).all(accountId, archived ? 1 : 0, limit).map(shapeChat);
 }
 function getChat(accountId, jid) { return shapeChat(db.prepare(`${CHAT_SELECT} WHERE c.account_id = ? AND c.jid = ?`).get(accountId, jid)); }
@@ -193,7 +201,7 @@ function shapeMessage(r) {
     id: r.id, account_id: r.account_id, chat_jid: r.chat_jid, msg_id: r.msg_id, from_me: !!r.from_me,
     sender_jid: r.sender_jid, sender_name: r.sender_name, kind: r.kind, text: r.text || '', status: r.status, timestamp: r.timestamp,
     quoted: r.quoted_id || r.quoted_text ? { id: r.quoted_id, text: r.quoted_text } : null,
-    original_text: r.original_text || null,
+    original_text: r.original_text || null, forwarded: !!r.forwarded,
     translation: r.translation || null, translation_lang: r.translation_lang || null, translation_target: r.translation_target || null,
   };
 }
@@ -212,10 +220,10 @@ function upsertMessage(accountId, m) {
   }
   const id = uuidv4();
   ensureChat(accountId, m.chatJid, m.isGroup);
-  db.prepare(`INSERT INTO chat_messages (id, account_id, chat_jid, msg_id, from_me, sender_jid, sender_name, kind, text, status, timestamp, quoted_id, quoted_text, original_text)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+  db.prepare(`INSERT INTO chat_messages (id, account_id, chat_jid, msg_id, from_me, sender_jid, sender_name, kind, text, status, timestamp, quoted_id, quoted_text, original_text, forwarded)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     id, accountId, m.chatJid, m.id, m.fromMe ? 1 : 0, m.senderJid || null, m.senderName || null, m.kind || 'text', m.text || '', m.status || 0, m.timestamp || now(),
-    m.quoted?.id || null, m.quoted?.text || null, m.originalText || null);
+    m.quoted?.id || null, m.quoted?.text || null, m.originalText || null, m.forwarded ? 1 : 0);
   // keep the chat's preview current
   db.prepare(`UPDATE chat_chats SET last_message_at = ?, last_message_text = ?, last_message_from_me = ?
     WHERE account_id = ? AND jid = ? AND COALESCE(last_message_at, 0) <= ?`).run(m.timestamp || now(), previewText(m), m.fromMe ? 1 : 0, accountId, m.chatJid, m.timestamp || now());
@@ -251,6 +259,14 @@ function untranslatedIncoming(accountId, jid, target, limit = 15) {
   return db.prepare(`SELECT * FROM chat_messages WHERE account_id = ? AND chat_jid = ? AND from_me = 0 AND text != '' AND (translation IS NULL OR translation_target IS NOT ?)
     ORDER BY timestamp DESC LIMIT ?`).all(accountId, jid, target, limit).map(shapeMessage);
 }
+// Telegram read receipts come as "everything up to message N was read" per chat (msg_id = "<jid>:<n>").
+function markOutgoingRead(accountId, jid, maxSeq) {
+  const rows = db.prepare(`SELECT id, msg_id FROM chat_messages WHERE account_id = ? AND chat_jid = ? AND from_me = 1 AND status < 4 ORDER BY timestamp DESC LIMIT 200`).all(accountId, jid)
+    .filter(r => Number(String(r.msg_id).split(':').pop()) <= maxSeq);
+  const upd = db.prepare('UPDATE chat_messages SET status = 4 WHERE id = ?');
+  for (const r of rows) upd.run(r.id);
+  return rows.map(r => getMessage(r.id));
+}
 function unreadIncomingIds(accountId, jid) {
   return db.prepare(`SELECT msg_id, sender_jid FROM chat_messages WHERE account_id = ? AND chat_jid = ? AND from_me = 0 ORDER BY timestamp DESC LIMIT 50`).all(accountId, jid);
 }
@@ -259,6 +275,12 @@ function unreadIncomingIds(accountId, jid) {
 const DEFAULT_SETTINGS = {
   myLanguage: 'English', targetLanguage: 'Spanish', autoIncoming: true, initialIncoming: 15,
   showOriginalOutgoing: true, enterTranslates: true, style: '', provider: null, model: null, notifications: true,
+  // which chats may push a notification when no Chats tab is open
+  notifyGroups: true, notifyArchived: false, notifyMuted: false,
+  // speech-to-text provider for call captions (groq | openai | null = whichever has a key)
+  sttProvider: null,
+  // Telegram API credentials (https://my.telegram.org) — env TELEGRAM_API_ID/HASH is the fallback
+  telegramApiId: null, telegramApiHash: null,
 };
 function getSettings(userId) {
   const r = db.prepare('SELECT data FROM chat_user_settings WHERE user_id = ?').get(userId);
@@ -296,6 +318,6 @@ function transaction(fn) {
 module.exports = {
   listAccounts, getAccount, getUserAccount, createAccount, updateAccount, deleteAccount,
   upsertContacts, listChats, getChat, ensureChat, upsertChats, updateChatPrefs, recentLanguages, setUnread, totalUnread,
-  upsertMessage, updateMessage, setTranslation, getMessage, getMessageByMsgId, listMessages, untranslatedIncoming, unreadIncomingIds,
+  upsertMessage, updateMessage, setTranslation, getMessage, getMessageByMsgId, listMessages, untranslatedIncoming, unreadIncomingIds, markOutgoingRead,
   getSettings, setSettings, getQuickAnswers, setQuickAnswers, DEFAULT_SETTINGS, transaction,
 };
