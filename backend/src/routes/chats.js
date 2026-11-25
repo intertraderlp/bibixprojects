@@ -90,6 +90,8 @@ function handleEvent(ev) {
       for (const m of payload.messages || []) {
         const { row, inserted } = store.upsertMessage(accountId, m);
         if (!row) continue;
+        // WhatsApp's push name is what the phone shows for a number not in the address book
+        if (!m.fromMe && !m.isGroup && m.senderName) store.upsertContacts(accountId, [{ jid: m.chatJid, notify: m.senderName }]);
         if (inserted && !m.fromMe && payload.type === 'notify') {
           const chat = store.getChat(accountId, m.chatJid);
           store.setUnread(accountId, m.chatJid, (chat?.unread_count || 0) + 1);

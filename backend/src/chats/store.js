@@ -129,8 +129,12 @@ function mergeLidChat(accountId, lid, pn) {
     db.prepare('DELETE FROM chat_messages WHERE account_id = ? AND chat_jid = ?').run(accountId, lid);
     const d = db.prepare('SELECT unread_count FROM chat_chats WHERE account_id = ? AND jid = ?').get(accountId, lid);
     if (d?.unread_count) db.prepare('UPDATE chat_chats SET unread_count = unread_count + ? WHERE account_id = ? AND jid = ?').run(d.unread_count, accountId, pn);
-    if (!had && d0) db.prepare('UPDATE chat_chats SET name = COALESCE(name, ?), archived = ?, pinned = ?, muted = ?, send_language = COALESCE(send_language, ?), auto_incoming = COALESCE(auto_incoming, ?) WHERE account_id = ? AND jid = ?')
-      .run(d0.name, d0.archived || 0, d0.pinned || 0, d0.muted || 0, d0.send_language, d0.auto_incoming, accountId, pn);
+    if (d0) {
+      if (had) db.prepare('UPDATE chat_chats SET name = COALESCE(name, ?), send_language = COALESCE(send_language, ?), auto_incoming = COALESCE(auto_incoming, ?) WHERE account_id = ? AND jid = ?').run(d0.name, d0.send_language, d0.auto_incoming, accountId, pn);
+      else db.prepare('UPDATE chat_chats SET name = COALESCE(name, ?), archived = ?, pinned = ?, muted = ?, send_language = COALESCE(send_language, ?), auto_incoming = COALESCE(auto_incoming, ?) WHERE account_id = ? AND jid = ?')
+        .run(d0.name, d0.archived || 0, d0.pinned || 0, d0.muted || 0, d0.send_language, d0.auto_incoming, accountId, pn);
+    }
+    mergeContact(accountId, lid, pn);
     db.prepare('DELETE FROM chat_chats WHERE account_id = ? AND jid = ?').run(accountId, lid);
     // the merged chat's preview
     const last = db.prepare('SELECT kind, text, from_me, timestamp FROM chat_messages WHERE account_id = ? AND chat_jid = ? ORDER BY timestamp DESC LIMIT 1').get(accountId, pn);
@@ -141,8 +145,22 @@ function mergeLidChat(accountId, lid, pn) {
   if (!n) { db.prepare('DELETE FROM chat_chats WHERE account_id = ? AND jid = ?').run(accountId, lid); return true; }
   return false;
 }
+// Move the name/notify of a contact row keyed by `from` onto the row keyed by `to` (keeping what `to` already has).
+function mergeContact(accountId, from, to) {
+  if (!from || !to || from === to) return;
+  const c = db.prepare('SELECT name, notify, lid FROM chat_contacts WHERE account_id = ? AND jid = ?').get(accountId, from);
+  if (!c) return;
+  upsertContacts(accountId, [{ jid: to, name: c.name, notify: c.notify, lid: c.lid || (from.endsWith('@lid') ? from : null) }]);
+  db.prepare('DELETE FROM chat_contacts WHERE account_id = ? AND jid = ?').run(accountId, from);
+}
 function cleanupLidChats() {
   let fixed = 0;
+  // contact rows keyed "<n>:<dev>@…" → plain; LID-keyed contact rows → the phone row that names that LID
+  for (const r of db.prepare(`SELECT account_id, jid FROM chat_contacts WHERE jid LIKE '%:%@%'`).all()) mergeContact(r.account_id, r.jid, canonJid(r.jid));
+  for (const r of db.prepare(`SELECT account_id, jid FROM chat_contacts WHERE jid LIKE '%@lid'`).all()) {
+    const pn = db.prepare(`SELECT jid FROM chat_contacts WHERE account_id = ? AND lid = ? AND jid NOT LIKE '%@lid'`).get(r.account_id, r.jid)?.jid;
+    if (pn) mergeContact(r.account_id, r.jid, pn);
+  }
   // "<n>:<dev>@s.whatsapp.net" → "<n>@s.whatsapp.net" (also re-key messages that sit under a device-qualified jid)
   for (const r of db.prepare(`SELECT DISTINCT account_id, chat_jid AS jid FROM chat_messages WHERE chat_jid LIKE '%:%@%' UNION SELECT account_id, jid FROM chat_chats WHERE jid LIKE '%:%@%'`).all()) {
     const to = canonJid(r.jid); if (to === r.jid) continue;
@@ -187,7 +205,7 @@ function deleteAccount(id) {
 function upsertContacts(accountId, contacts) {
   const stmt = db.prepare(`INSERT INTO chat_contacts (account_id, jid, name, notify, lid) VALUES (?, ?, ?, ?, ?)
     ON CONFLICT(account_id, jid) DO UPDATE SET name = COALESCE(excluded.name, name), notify = COALESCE(excluded.notify, notify), lid = COALESCE(excluded.lid, lid)`);
-  for (const c of contacts) { if (c?.jid) stmt.run(accountId, c.jid, c.name || null, c.notify || null, c.lid || null); }
+  for (const c of contacts) { if (c?.jid) stmt.run(accountId, canonJid(c.jid), c.name || null, c.notify || null, canonJid(c.lid) || null); }
 }
 
 // ── chats ────────────────────────────────────────────────────────────────────
