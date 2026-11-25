@@ -171,6 +171,15 @@ html,body{height:100%;background:var(--bg);font-family:-apple-system,BlinkMacSys
 .chat-send{width:44px;height:44px;background:var(--blue);border:none;border-radius:50%;color:#fff;font-size:20px;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:background var(--ease)}
 .chat-send:active{background:var(--blue-dk)}
 .chat-send:disabled{background:var(--border)}
+/* browse tasks + chats */
+.srch{display:flex;gap:8px;padding:10px 16px;background:var(--card);border-bottom:1px solid var(--border)}
+.srch input{flex:1;border:1px solid var(--border);border-radius:10px;padding:9px 12px;font-size:15px;background:var(--bg);color:inherit}
+.srch select{border:1px solid var(--border);border-radius:10px;padding:0 8px;font-size:13px;background:var(--bg);color:inherit}
+.tag{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;font-weight:700;color:#fff;background:#9aa0a6;margin-right:6px;vertical-align:middle}
+.li-meta{font-size:12px;color:var(--muted);margin-top:3px;display:flex;flex-wrap:wrap;gap:4px 10px;align-items:center}
+.li.done .li-title{text-decoration:line-through;opacity:.6}
+.ifr{flex:1;border:0;width:100%;background:#fff}
+.tb.slim{min-height:0;padding-bottom:10px}
 </style>
 </head>
 <body>
@@ -238,6 +247,12 @@ html,body{height:100%;background:var(--bg);font-family:-apple-system,BlinkMacSys
       </div>
       <div class="gc c-teal" onclick="push('my-tasks')">
         <div class="gc-ico">✅</div><div class="gc-lbl">My Tasks</div>
+      </div>
+      <div class="gc c-indigo" onclick="push('tb-ws')">
+        <div class="gc-ico">🗂️</div><div class="gc-lbl">Browse Tasks</div>
+      </div>
+      <div class="gc c-green" onclick="push('chats')">
+        <div class="gc-ico">💬</div><div class="gc-lbl">Chats</div>
       </div>
     </div>
   </div>
@@ -393,6 +408,27 @@ html,body{height:100%;background:var(--bg);font-family:-apple-system,BlinkMacSys
 </div>
 
 </div>
+<!-- BROWSE TASKS: workspace → board → tasks -->
+<div class="scr" id="s-tb-ws">
+  <div class="tb"><button class="tb-back" onclick="goBack()">‹</button><div class="tb-title">Browse Tasks</div></div>
+  <div class="inner np" id="tb-ws-body"><div class="loading"><div class="spin"></div></div></div>
+</div>
+<div class="scr" id="s-tb-board">
+  <div class="tb"><button class="tb-back" onclick="goBack()">‹</button><div class="tb-title" id="tb-board-ttl">Boards</div></div>
+  <div class="inner np" id="tb-board-body"><div class="loading"><div class="spin"></div></div></div>
+</div>
+<div class="scr" id="s-tb-tasks">
+  <div class="tb slim"><button class="tb-back" onclick="goBack()">‹</button><div class="tb-title" id="tb-tasks-ttl">Tasks</div><button class="tb-action" onclick="addTaskHere()">+ Add</button></div>
+  <div class="srch"><input type="search" id="tb-q" placeholder="Search tasks…" autocomplete="off" oninput="renderBrowse()"><select id="tb-f" onchange="renderBrowse()"><option value="all">All</option><option value="open">Open</option><option value="mine">Mine</option><option value="done">Done</option></select></div>
+  <div class="inner np" id="tb-tasks-body"><div class="loading"><div class="spin"></div></div></div>
+</div>
+
+<!-- CHATS (WhatsApp / Telegram + AI translation), embedded -->
+<div class="scr" id="s-chats">
+  <div class="tb slim"><button class="tb-back" onclick="goBack()">‹</button><div class="tb-title">Chats</div><button class="tb-action" onclick="window.open('/chats/','_blank')" title="Open full screen">⤢</button></div>
+  <iframe class="ifr" id="chats-ifr" src="about:blank" allow="microphone; clipboard-read; clipboard-write" title="Chats"></iframe>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -462,6 +498,8 @@ function onEnter(id) {
   if (id === 'bibixbot')       initChat();
   if (id === 'profile')        renderProfile();
   if (id === 'set-reminder')   initReminderForm();
+  if (id === 'tb-ws')          loadBrowseWS();
+  if (id === 'chats')          openChats();
 }
 
 // ── Steps ─────────────────────────────────────────────────────────────────────
@@ -946,7 +984,7 @@ function saveTask() {
     return Promise.all(saves);
   }).then(function() {
     toast(wiz.mode === 'sub' ? '✅ Subtask added!' : '✅ Task added!', 'ok');
-    goHome();
+    if (wiz.fromBrowse) { returnTo('tb-tasks'); loadBrowseBoard(); } else goHome();
   }).catch(function(e) {
     toast(e.message, 'err');
     btn.disabled = false; btn.textContent = 'Save';
@@ -976,26 +1014,150 @@ function loadMyTasks() {
       var detailRequests = boardList.map(function(b) { return api('GET', '/api/boards/' + b.id).catch(function() { return null; }); });
       return Promise.all(detailRequests).then(function(details) {
         var html = '';
+        var anyPerson = false;
         details.forEach(function(board) {
           if (!board || !board.items || !board.items.length) return;
-          html += '<div class="sec" style="padding:0 16px">' + esc(board.name) + '</div>';
-          html += '<div class="list-wrap">';
-          board.items.forEach(function(item) {
-            var grp = (board.groups || []).find(function(g) { return g.id === item.group_id; });
-            var grpColor = grp ? grp.color : '#ccc';
-            html += '<div class="li" onclick="openTaskEdit(\'' + esc(item.id) + '\',\'' + esc(board.id) + '\')">' +
-              '<div class="li-ico" style="background:' + grpColor + '22"><div class="gdot" style="background:' + grpColor + '"></div></div>' +
-              '<div class="li-txt"><div class="li-title">' + esc(item.name) + '</div>' +
-              '<div class="li-sub">' + (grp ? esc(grp.name) : '') + '</div></div>' +
-              '<div class="li-chev">›</div></div>';
-          });
+          var ix = indexBoard(board);
+          if (ix.personCols.length) anyPerson = true;
+          var mine = board.items.filter(function(item) { return isMine(ix, item) && !isDone(ix, item); });
+          if (!mine.length) return;
+          html += '<div class="sec" style="padding:0 16px">' + esc(board.name) + '</div><div class="list-wrap">';
+          mine.forEach(function(item) { html += taskRow(board, ix, item); });
           html += '</div>';
         });
-        if (!html) html = '<div class="empty"><div class="empty-ico">✅</div><div class="empty-t">No tasks yet</div></div>';
+        if (!html) html = '<div class="empty"><div class="empty-ico">✅</div><div class="empty-t">' + (anyPerson ? 'No open tasks assigned to you' : 'No tasks assigned to you yet') + '</div><div class="li-sub">Use <b>Browse Tasks</b> to see every task on a board.</div></div>';
         el.innerHTML = html;
       });
     });
   }).catch(function(e) { el.innerHTML = '<div class="empty"><div class="empty-ico">⚠️</div><div class="empty-t">' + esc(e.message) + '</div></div>'; });
+}
+
+// ── Task helpers (shared by My Tasks and Browse) ─────────────────────────────
+function indexBoard(board) {
+  var cols = board.columns || [];
+  var vals = {};
+  (board.values || []).forEach(function(v) { (vals[v.item_id] = vals[v.item_id] || {})[v.column_id] = v.value; });
+  var byType = function(t) { return cols.filter(function(c) { return c.type === t; }); };
+  return { cols: cols, vals: vals, statusCol: byType('status')[0] || null, priorityCol: byType('priority')[0] || null, dateCol: byType('date')[0] || null, personCols: byType('person'),
+    groups: {}, users: null };
+}
+function val(ix, item, col) { return col ? ((ix.vals[item.id] || {})[col.id] || '') : ''; }
+function isDone(ix, item) { var s = val(ix, item, ix.statusCol); return /^(done|completed?|finished|closed)$/i.test(String(s).trim()); }
+function isMine(ix, item) {
+  if (!user || !ix.personCols.length) return false;
+  return ix.personCols.some(function(c) { var v = val(ix, item, c); return v === user.id || (v && v.indexOf(user.id) !== -1) || (user.email && v === user.email); });
+}
+function statusColor(ix, label) {
+  var s = (ix.statusCol && ix.statusCol.settings) || {};
+  var o = (s.options || []).find(function(o) { return o.label === label; });
+  if (o && o.color) return o.color;
+  if (/done|complete/i.test(label)) return '#00c875';
+  if (/stuck|block/i.test(label)) return '#e2445c';
+  if (/working|progress/i.test(label)) return '#fdab3d';
+  return '#9aa0a6';
+}
+function fmtDate(s) { if (!s) return ''; var d = new Date(s); if (isNaN(d)) return s; return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short' }); }
+function taskRow(board, ix, item) {
+  var grp = (board.groups || []).find(function(g) { return g.id === item.group_id; });
+  var grpColor = grp ? grp.color : '#ccc';
+  var st = val(ix, item, ix.statusCol), pr = val(ix, item, ix.priorityCol), dt = val(ix, item, ix.dateCol);
+  var who = ix.personCols.map(function(c) { var v = val(ix, item, c); var u = (ix.users || []).find(function(u) { return u.id === v; }); return u ? u.name : ''; }).filter(Boolean).join(', ');
+  var meta = (st ? '<span class="tag" style="background:' + esc(statusColor(ix, st)) + '">' + esc(st) + '</span>' : '') +
+    (pr ? '<span>' + esc(pr) + '</span>' : '') + (dt ? '<span>📅 ' + esc(fmtDate(dt)) + '</span>' : '') + (who ? '<span>👤 ' + esc(who) + '</span>' : '');
+  return '<div class="li' + (isDone(ix, item) ? ' done' : '') + '" onclick="openTaskEdit(\'' + esc(item.id) + '\',\'' + esc(board.id) + '\')">' +
+    '<div class="li-ico" style="background:' + grpColor + '22"><div class="gdot" style="background:' + grpColor + '"></div></div>' +
+    '<div class="li-txt"><div class="li-title">' + esc(item.name) + '</div>' +
+    '<div class="li-meta">' + (grp && !ix._grouped ? '<span>' + esc(grp.name) + '</span>' : '') + meta + '</div></div>' +
+    '<div class="li-chev">›</div></div>';
+}
+
+// ── Browse tasks: workspace → board → tasks ──────────────────────────────────
+var browse = {};
+function loadBrowseWS() {
+  var el = document.getElementById('tb-ws-body');
+  el.innerHTML = '<div class="loading"><div class="spin"></div></div>';
+  api('GET', '/api/workspaces').then(function(ws) {
+    if (!ws.length) { el.innerHTML = '<div class="empty"><div class="empty-ico">🏢</div><div class="empty-t">No workspaces</div></div>'; return; }
+    el.innerHTML = '<div class="list-wrap">' + ws.map(function(w) {
+      return '<div class="li" data-wsid="' + esc(w.id) + '" data-wsname="' + esc(w.name) + '"><div class="li-ico" style="background:#e8f3ff">🏢</div><div class="li-txt"><div class="li-title">' + esc(w.name) + '</div></div><div class="li-chev">›</div></div>';
+    }).join('') + '</div>';
+    bindClicks(el, 'wsid', function(e) { browseWS(e.dataset.wsid, e.dataset.wsname); });
+  }).catch(function(e) { el.innerHTML = '<div class="empty"><div class="empty-ico">⚠️</div><div class="empty-t">' + esc(e.message) + '</div></div>'; });
+}
+function browseWS(id, name) {
+  browse.wsId = id; browse.wsName = name;
+  document.getElementById('tb-board-ttl').textContent = name;
+  push('tb-board');
+  var el = document.getElementById('tb-board-body');
+  el.innerHTML = '<div class="loading"><div class="spin"></div></div>';
+  api('GET', '/api/boards/workspace/' + id).then(function(boards) {
+    if (!boards.length) { el.innerHTML = '<div class="empty"><div class="empty-ico">📋</div><div class="empty-t">No boards</div></div>'; return; }
+    el.innerHTML = '<div class="list-wrap">' + boards.map(function(b) {
+      return '<div class="li" data-bid="' + esc(b.id) + '" data-bname="' + esc(b.name) + '"><div class="li-ico">' + (b.icon || '📋') + '</div><div class="li-txt"><div class="li-title">' + esc(b.name) + '</div></div><div class="li-chev">›</div></div>';
+    }).join('') + '</div>';
+    bindClicks(el, 'bid', function(e) { browseBoard(e.dataset.bid, e.dataset.bname); });
+  }).catch(function(e) { el.innerHTML = '<div class="empty"><div class="empty-ico">⚠️</div><div class="empty-t">' + esc(e.message) + '</div></div>'; });
+}
+function browseBoard(id, name) {
+  browse.boardId = id; browse.boardName = name; browse.board = null;
+  document.getElementById('tb-tasks-ttl').textContent = name;
+  document.getElementById('tb-q').value = '';
+  push('tb-tasks');
+  loadBrowseBoard();
+}
+function loadBrowseBoard() {
+  var el = document.getElementById('tb-tasks-body');
+  if (!browse.board) el.innerHTML = '<div class="loading"><div class="spin"></div></div>';
+  Promise.all([api('GET', '/api/boards/' + browse.boardId), browse.users ? Promise.resolve(browse.users) : api('GET', '/api/auth/users').catch(function() { return []; })]).then(function(r) {
+    browse.board = r[0]; browse.users = r[1]; renderBrowse();
+  }).catch(function(e) { el.innerHTML = '<div class="empty"><div class="empty-ico">⚠️</div><div class="empty-t">' + esc(e.message) + '</div></div>'; });
+}
+function renderBrowse() {
+  var board = browse.board; if (!board) return;
+  var el = document.getElementById('tb-tasks-body');
+  var q = (document.getElementById('tb-q').value || '').trim().toLowerCase();
+  var f = document.getElementById('tb-f').value;
+  var ix = indexBoard(board); ix.users = browse.users || []; ix._grouped = true;
+  var items = (board.items || []).filter(function(it) {
+    if (it.parent_item_id) return false;
+    if (q && (it.name || '').toLowerCase().indexOf(q) === -1) return false;
+    if (f === 'open' && isDone(ix, it)) return false;
+    if (f === 'done' && !isDone(ix, it)) return false;
+    if (f === 'mine' && !isMine(ix, it)) return false;
+    return true;
+  });
+  if (!items.length) { el.innerHTML = '<div class="empty"><div class="empty-ico">📝</div><div class="empty-t">' + (q || f !== 'all' ? 'No matching tasks' : 'No tasks on this board') + '</div></div>'; return; }
+  var html = '';
+  (board.groups || []).forEach(function(g) {
+    var gi = items.filter(function(it) { return it.group_id === g.id; });
+    if (!gi.length) return;
+    html += '<div class="sec" style="padding:0 16px;display:flex;align-items:center;gap:8px"><span class="gdot" style="background:' + esc(g.color || '#ccc') + '"></span>' + esc(g.name) + ' <span style="font-weight:500">(' + gi.length + ')</span></div><div class="list-wrap">';
+    gi.forEach(function(it) { html += taskRow(board, ix, it); });
+    html += '</div>';
+  });
+  var orphans = items.filter(function(it) { return !(board.groups || []).some(function(g) { return g.id === it.group_id; }); });
+  if (orphans.length) { html += '<div class="list-wrap">'; orphans.forEach(function(it) { html += taskRow(board, ix, it); }); html += '</div>'; }
+  el.innerHTML = html;
+}
+// "+ Add" on a board: jump into the add-task wizard with the workspace and board preselected
+function addTaskHere() {
+  wiz = { mode: 'new', wsId: browse.wsId, wsName: browse.wsName, fromBrowse: true };
+  selBoard(browse.boardId, browse.boardName);
+}
+// pop screens until `id` is on top (used to return to the board list after adding a task there)
+function returnTo(id) {
+  while (stk.length > 1 && stk[stk.length - 1] !== id) goBack();
+}
+// after an edit, lists that are still on the stack refresh themselves
+function refreshTaskLists() {
+  if (stk.indexOf('tb-tasks') !== -1 && browse.boardId) loadBrowseBoard();
+  if (stk.indexOf('my-tasks') !== -1) loadMyTasks();
+}
+
+// ── Chats inside the PWA (same login: the chats app reads bx_tok) ────────────
+function openChats() {
+  var f = document.getElementById('chats-ifr');
+  if (f.getAttribute('src') === 'about:blank') f.src = '/chats/?embed=1';
 }
 
 function openTaskEdit(itemId, boardId) {
@@ -1080,6 +1242,7 @@ function saveTaskEdit() {
     .then(function() {
       toast('✅ Task updated!', 'ok');
       goBack();
+      refreshTaskLists();
     })
     .catch(function(e) {
       toast(e.message, 'err');
