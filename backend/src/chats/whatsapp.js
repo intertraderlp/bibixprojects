@@ -41,6 +41,13 @@ const tsMs = (v) => { const n = toNum(v); return n > 1e12 ? n : n * 1000; };
 
 const PN_SUFFIX = '@s.whatsapp.net';
 function isLid(jid) { return typeof jid === 'string' && jid.endsWith('@lid'); }
+// Baileys' LID→PN lookups (and some mappings) return the device-qualified form "<number>:<device>@s.whatsapp.net",
+// which would key a second chat next to "<number>@s.whatsapp.net". One user, one jid.
+function canonJid(jid) {
+  if (typeof jid !== 'string') return jid;
+  const m = /^([^:@]+)(?::\d+)?@(s\.whatsapp\.net|lid|hosted)$/.exec(jid);
+  return m ? `${m[1]}@${m[2]}` : jid;
+}
 function phoneOf(jid) { const m = /^(\d+)(?::\d+)?@s\.whatsapp\.net$/.exec(jid || ''); return m ? m[1] : null; }
 
 // Unwrap the many "envelope" message types WhatsApp uses.
@@ -138,14 +145,20 @@ function createWhatsAppDriver({ onEvent }) {
   // Normalise a jid: prefer the phone-number form over the LID form.
   async function pnJid(acc, jid, alt) {
     if (!jid) return null;
+    jid = canonJid(jid);
     if (!isLid(jid)) return jid;
-    if (alt && !isLid(alt)) return alt;
+    if (alt && !isLid(alt)) { alt = canonJid(alt); acc.lidMap.set(jid, alt); return alt; }
     const cached = acc.lidMap.get(jid); if (cached) return cached;
     try {
-      const pn = await acc.sock?.signalRepository?.lidMapping?.getPNForLID?.(jid);
-      if (pn) { acc.lidMap.set(jid, pn); return pn; }
+      const pn = canonJid(await acc.sock?.signalRepository?.lidMapping?.getPNForLID?.(jid));
+      if (pn && !isLid(pn)) { acc.lidMap.set(jid, pn); return pn; }
     } catch (_) {}
     return jid; // unknown mapping — keep the LID; a later lid-mapping.update will fix it
+  }
+  function learnMapping(acc, lid, pn) {
+    lid = canonJid(lid); pn = canonJid(pn);
+    if (!isLid(lid) || !pn || isLid(pn)) return null;
+    acc.lidMap.set(lid, pn); return { lid, pn };
   }
 
   async function normMessage(acc, msg) {
@@ -173,7 +186,7 @@ function createWhatsAppDriver({ onEvent }) {
 
   async function normChat(acc, c) {
     const { isJidGroup, isJidBroadcast, isJidStatusBroadcast } = await lib();
-    const raw = c.pnJid || (c.id && !isLid(c.id) ? c.id : null) || (await pnJid(acc, c.id));
+    const raw = canonJid(c.pnJid) || (c.id && !isLid(c.id) ? canonJid(c.id) : null) || (await pnJid(acc, c.id));
     // A chat we can only name by its LID would show up as a second, empty copy of the phone-number chat
     // (the messages themselves carry remoteJidAlt and land in the right one) — skip it.
     if (!raw || isLid(raw) || isJidBroadcast(raw) || isJidStatusBroadcast(raw) || raw === 'status@broadcast') return null;
@@ -190,9 +203,11 @@ function createWhatsAppDriver({ onEvent }) {
   }
 
   async function normContact(acc, c) {
-    const jid = c.phoneNumber || (!isLid(c.id) ? c.id : await pnJid(acc, c.id));
+    const lid = canonJid(c.lid || (isLid(c.id) ? c.id : null)) || null;
+    if (lid && c.phoneNumber) learnMapping(acc, lid, c.phoneNumber);
+    const jid = canonJid(c.phoneNumber) || (!isLid(c.id) ? canonJid(c.id) : await pnJid(acc, c.id));
     if (!jid || isLid(jid)) return null;
-    return { jid, name: c.name || null, notify: c.notify || null, lid: c.lid || (isLid(c.id) ? c.id : null) };
+    return { jid, name: c.name || null, notify: c.notify || null, lid };
   }
 
   async function connect(acc) {
@@ -269,10 +284,10 @@ function createWhatsAppDriver({ onEvent }) {
       }
     });
 
-    sock.ev.on('lid-mapping.update', (m) => { if (m?.lid && m?.pn) { acc.lidMap.set(m.lid, m.pn); emit(acc, 'lid-mapping', { lid: m.lid, pn: m.pn }); } });
+    sock.ev.on('lid-mapping.update', (m) => { const k = m && learnMapping(acc, m.lid, m.pn); if (k) emit(acc, 'lid-mapping', k); });
 
     sock.ev.on('messaging-history.set', async ({ chats = [], contacts = [], messages = [], isLatest, progress, syncType, lidPnMappings = [] }) => {
-      for (const m of lidPnMappings) if (m?.lid && m?.pn) acc.lidMap.set(m.lid, m.pn);
+      for (const m of lidPnMappings) if (m) learnMapping(acc, m.lid, m.pn);
       const outChats = [], outContacts = [], outMsgs = [];
       for (const c of contacts) { const n = await normContact(acc, c); if (n) outContacts.push(n); }
       for (const c of chats) { const n = await normChat(acc, c); if (n) outChats.push(n); }

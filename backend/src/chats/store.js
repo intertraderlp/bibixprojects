@@ -108,18 +108,33 @@ addColumn('chat_messages', 'media', 'TEXT');
 
 const now = () => Date.now();
 
-// LID-keyed duplicates: merge a "<x>@lid" chat into its phone-number chat (when the mapping is known) or
-// drop it when it holds nothing. Runs at boot and whenever a lid→pn mapping arrives.
+// One WhatsApp user, one jid: strip the device part of "<number>:<device>@s.whatsapp.net" (Baileys' LID→PN
+// lookups return that form) so messages and chat-list updates for the same person share one chat row.
+function canonJid(jid) {
+  if (typeof jid !== 'string') return jid;
+  const m = /^([^:@]+)(?::\d+)?@(s\.whatsapp\.net|lid|hosted)$/.exec(jid);
+  return m ? `${m[1]}@${m[2]}` : jid;
+}
+
+// Duplicate chats: merge a "<x>@lid" or "<n>:<dev>@s.whatsapp.net" chat into its phone-number chat (when known)
+// or drop it when it holds nothing. Runs at boot and whenever a lid→pn mapping arrives.
 function mergeLidChat(accountId, lid, pn) {
   const dup = db.prepare('SELECT id FROM chat_chats WHERE account_id = ? AND jid = ?').get(accountId, lid);
   if (!dup) return false;
-  if (pn) {
+  if (pn && pn !== lid) {
+    const d0 = db.prepare('SELECT name, archived, pinned, muted, send_language, auto_incoming FROM chat_chats WHERE account_id = ? AND jid = ?').get(accountId, lid);
+    const had = !!db.prepare('SELECT id FROM chat_chats WHERE account_id = ? AND jid = ?').get(accountId, pn);
     ensureChat(accountId, pn, 0);
     db.prepare('UPDATE OR IGNORE chat_messages SET chat_jid = ? WHERE account_id = ? AND chat_jid = ?').run(pn, accountId, lid);
     db.prepare('DELETE FROM chat_messages WHERE account_id = ? AND chat_jid = ?').run(accountId, lid);
     const d = db.prepare('SELECT unread_count FROM chat_chats WHERE account_id = ? AND jid = ?').get(accountId, lid);
     if (d?.unread_count) db.prepare('UPDATE chat_chats SET unread_count = unread_count + ? WHERE account_id = ? AND jid = ?').run(d.unread_count, accountId, pn);
+    if (!had && d0) db.prepare('UPDATE chat_chats SET name = COALESCE(name, ?), archived = ?, pinned = ?, muted = ?, send_language = COALESCE(send_language, ?), auto_incoming = COALESCE(auto_incoming, ?) WHERE account_id = ? AND jid = ?')
+      .run(d0.name, d0.archived || 0, d0.pinned || 0, d0.muted || 0, d0.send_language, d0.auto_incoming, accountId, pn);
     db.prepare('DELETE FROM chat_chats WHERE account_id = ? AND jid = ?').run(accountId, lid);
+    // the merged chat's preview
+    const last = db.prepare('SELECT kind, text, from_me, timestamp FROM chat_messages WHERE account_id = ? AND chat_jid = ? ORDER BY timestamp DESC LIMIT 1').get(accountId, pn);
+    if (last) db.prepare('UPDATE chat_chats SET last_message_at = ?, last_message_text = ?, last_message_from_me = ? WHERE account_id = ? AND jid = ?').run(last.timestamp, previewText({ kind: last.kind, text: last.text }), last.from_me, accountId, pn);
     return true;
   }
   const n = db.prepare('SELECT COUNT(*) AS n FROM chat_messages WHERE account_id = ? AND chat_jid = ?').get(accountId, lid).n;
@@ -128,11 +143,17 @@ function mergeLidChat(accountId, lid, pn) {
 }
 function cleanupLidChats() {
   let fixed = 0;
+  // "<n>:<dev>@s.whatsapp.net" → "<n>@s.whatsapp.net" (also re-key messages that sit under a device-qualified jid)
+  for (const r of db.prepare(`SELECT DISTINCT account_id, chat_jid AS jid FROM chat_messages WHERE chat_jid LIKE '%:%@%' UNION SELECT account_id, jid FROM chat_chats WHERE jid LIKE '%:%@%'`).all()) {
+    const to = canonJid(r.jid); if (to === r.jid) continue;
+    ensureChat(r.account_id, r.jid, 0);
+    if (mergeLidChat(r.account_id, r.jid, to)) fixed++;
+  }
   for (const r of db.prepare(`SELECT account_id, jid FROM chat_chats WHERE jid LIKE '%@lid'`).all()) {
     const c = db.prepare('SELECT jid FROM chat_contacts WHERE account_id = ? AND lid = ?').get(r.account_id, r.jid);
     if (mergeLidChat(r.account_id, r.jid, c?.jid || null)) fixed++;
   }
-  if (fixed) console.log(`[chats] merged/removed ${fixed} LID duplicate chat(s)`);
+  if (fixed) console.log(`[chats] merged/removed ${fixed} duplicate chat(s)`);
 }
 try { cleanupLidChats(); } catch (e) { console.warn('[chats] lid cleanup failed:', e.message); }
 
@@ -190,8 +211,9 @@ function listChats(accountId, { archived = 0, limit = 500 } = {}) {
   if (archived === 'all') return db.prepare(`${CHAT_SELECT} WHERE c.account_id = ? ORDER BY c.archived ASC, c.pinned DESC, COALESCE(c.last_message_at, 0) DESC LIMIT ?`).all(accountId, limit).map(shapeChat);
   return db.prepare(`${CHAT_SELECT} WHERE c.account_id = ? AND c.archived = ? ORDER BY c.pinned DESC, COALESCE(c.last_message_at, 0) DESC LIMIT ?`).all(accountId, archived ? 1 : 0, limit).map(shapeChat);
 }
-function getChat(accountId, jid) { return shapeChat(db.prepare(`${CHAT_SELECT} WHERE c.account_id = ? AND c.jid = ?`).get(accountId, jid)); }
+function getChat(accountId, jid) { jid = canonJid(jid); return shapeChat(db.prepare(`${CHAT_SELECT} WHERE c.account_id = ? AND c.jid = ?`).get(accountId, jid)); }
 function ensureChat(accountId, jid, isGroup) {
+  jid = canonJid(jid);
   const row = db.prepare('SELECT id FROM chat_chats WHERE account_id = ? AND jid = ?').get(accountId, jid);
   if (row) return row.id;
   const id = uuidv4();
@@ -201,6 +223,7 @@ function ensureChat(accountId, jid, isGroup) {
 function upsertChats(accountId, chats) {
   for (const c of chats) {
     if (!c?.jid) continue;
+    c.jid = canonJid(c.jid);
     ensureChat(accountId, c.jid, c.isGroup);
     const cols = [], vals = [];
     if (c.name) { cols.push('name = ?'); vals.push(c.name); }
@@ -226,7 +249,7 @@ function recentLanguages(userId, limit = 8) {
   return db.prepare(`SELECT DISTINCT c.send_language AS l FROM chat_chats c JOIN chat_accounts a ON a.id = c.account_id
     WHERE a.user_id = ? AND c.send_language IS NOT NULL ORDER BY c.lang_updated_at DESC LIMIT ?`).all(userId, limit).map(r => r.l);
 }
-function setUnread(accountId, jid, n) { db.prepare('UPDATE chat_chats SET unread_count = ? WHERE account_id = ? AND jid = ?').run(n, accountId, jid); }
+function setUnread(accountId, jid, n) { jid = canonJid(jid); db.prepare('UPDATE chat_chats SET unread_count = ? WHERE account_id = ? AND jid = ?').run(n, accountId, jid); }
 function totalUnread(userId) {
   return db.prepare(`SELECT COALESCE(SUM(c.unread_count),0) AS n FROM chat_chats c JOIN chat_accounts a ON a.id = c.account_id WHERE a.user_id = ? AND c.archived = 0 AND c.muted = 0`).get(userId).n;
 }
@@ -248,6 +271,7 @@ function setMediaLocal(id, local) { const m = mediaRaw(id) || {}; m.local = loca
 // Insert or merge. Returns { row, inserted }.
 function upsertMessage(accountId, m) {
   if (!m?.id || !m.chatJid) return { row: null, inserted: false };
+  m.chatJid = canonJid(m.chatJid); if (m.senderJid) m.senderJid = canonJid(m.senderJid);
   const existing = db.prepare('SELECT * FROM chat_messages WHERE account_id = ? AND msg_id = ?').get(accountId, m.id);
   if (existing) {
     const cols = [], vals = [];
@@ -367,5 +391,5 @@ module.exports = {
   upsertContacts, listChats, getChat, ensureChat, upsertChats, updateChatPrefs, recentLanguages, setUnread, totalUnread,
   upsertMessage, updateMessage, setTranslation, getMessage, getMessageByMsgId, listMessages, untranslatedIncoming, unreadIncomingIds, markOutgoingRead, mediaRaw, setMediaLocal,
   getSettings, setSettings, getQuickAnswers, setQuickAnswers, DEFAULT_SETTINGS, transaction,
-  listStickers, addSticker, getSticker, deleteSticker, mergeLidChat, cleanupLidChats,
+  listStickers, addSticker, getSticker, deleteSticker, mergeLidChat, cleanupLidChats, canonJid,
 };
