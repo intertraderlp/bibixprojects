@@ -45,6 +45,8 @@
   }
 
   // ── Auth ───────────────────────────────────────────────────────────────────
+  // Chat objects arriving over SSE / prefs are not annotated with the bot that handles them: keep what we know.
+  const putChat = (jid, c) => { if (c && c.bot === undefined) { const old = S.chats.get(jid); if (old) { c.bot = old.bot || null; c.bot_reason = old.bot_reason; } } S.chats.set(jid, c); };
   function show(id) { for (const s of $$('.screen')) s.classList.toggle('hidden', s.id !== id); }
   async function boot() {
     S.token = localStorage.getItem('token') || localStorage.getItem('bx_tok');
@@ -149,7 +151,7 @@
     $('#nc-go').disabled = true; $('#nc-status').textContent = 'Looking up…';
     try {
       const c = await api(`/chats/accounts/${S.account.id}/chats/new`, { body });
-      if ((c.archived ? 1 : 0) === S.tab) S.chats.set(c.jid, c);
+      if ((c.archived ? 1 : 0) === S.tab) putChat(c.jid, c);
       closeModal('m-newchat'); renderChatList(); openChat(c.jid);
     } catch (e) { $('#nc-status').textContent = e.message; }
     finally { $('#nc-go').disabled = false; }
@@ -258,7 +260,7 @@
     S.chats.clear(); renderChatList();
     if (!S.account) return;
     const rows = await api(`/chats/accounts/${S.account.id}/chats?archived=${S.tab}`);
-    for (const c of rows) S.chats.set(c.jid, c);
+    for (const c of rows) putChat(c.jid, c);
     renderChatList(); updateBadge();
   }
   function fmtTime(ts) {
@@ -282,6 +284,7 @@
           <div class="ci-top"><span class="ci-name">${esc(c.name)}</span><span class="ci-time">${fmtTime(c.last_message_at)}</span></div>
           <div class="ci-bot"><span class="ci-prev">${c.last_message_from_me ? '<span class="muted">You: </span>' : ''}${esc(c.last_message_text || '')}</span>
             ${c.send_language ? `<span class="ci-lang ${c.send_language_detected ? 'detected' : ''}" title="${c.send_language_detected ? 'Auto-detected' : 'Chosen by you'}">${esc(c.send_language)}</span>` : ''}
+            ${c.bot ? `<span class="ci-bot ${c.bot.paused ? 'paused' : ''}" title="${esc(c.bot.name)}${c.bot.paused ? ' — paused' : ''}${c.bot.assigned ? ' (pinned to this chat)' : ''}">${esc(c.bot.emoji || '🤖')}</span>` : ''}
             ${c.unread_count ? `<span class="ci-badge">${c.unread_count}</span>` : ''}</div>
         </div></div>`).join('');
     const empty = $('#list-empty');
@@ -314,7 +317,7 @@
     try {
       const d = await api(`/chats/accounts/${S.account.id}/chats/${encodeURIComponent(jid)}/messages?limit=60`);
       if (S.jid !== jid) return;
-      if (d.chat) S.chats.set(jid, d.chat);
+      if (d.chat) putChat(jid, d.chat);
       S.messages = d.messages; S.oldestTs = d.messages[0]?.timestamp || null;
       renderMessages(true); renderThreadHead(); syncBar();
       if (chat()?.unread_count) markRead();
@@ -329,7 +332,8 @@
     $('#thread-avatar').className = 'avatar' + (c.is_group ? ' group' : '');
     $('#thread-avatar').innerHTML = c.picture_url ? `<img src="${esc(c.picture_url)}" alt="">` : esc(initials(c.name));
     const pf = PF[platform()]?.name || '';
-    $('#thread-sub').textContent = [c.is_group ? 'Group' : (c.phone ? '+' + c.phone : ''), pf].filter(Boolean).join(' · ');
+    const bot = c.bot ? `${c.bot.emoji || '🤖'} ${c.bot.name}${c.bot.paused ? ' (paused)' : ''}` : (c.bot_mode === 'off' ? 'no bot' : '');
+    $('#thread-sub').textContent = [c.is_group ? 'Group' : (c.phone ? '+' + c.phone : ''), pf, bot].filter(Boolean).join(' · ');
   }
   async function markRead() {
     const c = chat(); if (!c) return;
@@ -366,7 +370,7 @@
     }
     const q = m.quoted ? { ...m.quoted, text: m.quoted.text || S.messages.find(x => x.msg_id === m.quoted.id)?.text || '…' } : null;
     return `<div class="msg ${m.from_me ? 'out' : 'in'}${m.kind === 'call' ? ' call' : ''}${m.media?.type === 'sticker' ? ' sticker' : ''}" data-id="${m.id}" data-ts="${m.timestamp}">
-      <div class="bubble">${m.forwarded ? '<div class="fwd">↪ Forwarded</div>' : ''}${c?.is_group && !m.from_me && m.sender_name ? `<div class="sender">${esc(m.sender_name)}</div>` : ''}${q ? `<div class="quoted" data-goto="${esc(q.id || '')}">${esc(q.text)}</div>` : ''}${caption}${body}<div class="meta">${new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} ${ticks(m)}</div></div>
+      <div class="bubble">${m.forwarded ? '<div class="fwd">↪ Forwarded</div>' : ''}${c?.is_group && !m.from_me && m.sender_name ? `<div class="sender">${esc(m.sender_name)}</div>` : ''}${q ? `<div class="quoted" data-goto="${esc(q.id || '')}">${esc(q.text)}</div>` : ''}${caption}${body}<div class="meta">${m.bot_id ? '<span class="bt" title="Sent by a bot">🤖</span>' : ''}${new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })} ${ticks(m)}</div></div>
       ${notes}${m.text && m.kind !== 'call' ? `<span class="tbtn" data-tr="${m.id}" title="Translate this message → ${esc(S.settings.myLanguage)}">🌐</span>` : ''}</div>`;
   }
   const mediaUrl = (m) => `/api/chats/messages/${m.id}/media?token=${encodeURIComponent(S.token)}`;
@@ -650,12 +654,12 @@
     let v = $('#bx-target').value;
     if (v === '__other') v = (window.prompt('Language to send this chat\'s messages in (e.g. Hebrew, Arabic, Japanese):', '') || '').trim();
     if (!v) return syncBar();
-    try { const c = await put(`/chats/accounts/${S.account.id}/chats/${encodeURIComponent(S.jid)}/prefs`, { send_language: v, send_language_detected: false }); S.chats.set(S.jid, c); if (!S.meta.recent.includes(v)) S.meta.recent.unshift(v); }
+    try { const c = await put(`/chats/accounts/${S.account.id}/chats/${encodeURIComponent(S.jid)}/prefs`, { send_language: v, send_language_detected: false }); putChat(S.jid, c); if (!S.meta.recent.includes(v)) S.meta.recent.unshift(v); }
     catch (e) { status(e.message, 'err'); }
     syncBar(); renderChatList();
   });
   $('#bx-auto').addEventListener('change', async () => {
-    try { const c = await put(`/chats/accounts/${S.account.id}/chats/${encodeURIComponent(S.jid)}/prefs`, { auto_incoming: $('#bx-auto').checked }); S.chats.set(S.jid, c); } catch (e) { status(e.message, 'err'); }
+    try { const c = await put(`/chats/accounts/${S.account.id}/chats/${encodeURIComponent(S.jid)}/prefs`, { auto_incoming: $('#bx-auto').checked }); putChat(S.jid, c); } catch (e) { status(e.message, 'err'); }
     if ($('#bx-auto').checked) translateRecent(S.settings.initialIncoming);
   });
 
@@ -1011,18 +1015,26 @@
     on('chat:chats', d => {
       if (d.account_id !== S.account?.id) return;
       for (const j of d.removed || []) { S.chats.delete(j); if (S.jid === j) closeThread(); }
-      for (const c of d.chats) { if (!c) continue; if ((c.archived ? 1 : 0) === S.tab) S.chats.set(c.jid, c); else S.chats.delete(c.jid); }
+      for (const c of d.chats) { if (!c) continue; if ((c.archived ? 1 : 0) === S.tab) putChat(c.jid, c); else S.chats.delete(c.jid); }
       renderChatList(); updateBadge();
       if (d.detected && d.chats[0]?.jid === S.jid) { syncBar(); status(`This chat: sending in ${d.detected} (auto-detected)`, 'ok'); }
       else if (d.chats.some(c => c?.jid === S.jid)) syncBar();
     });
     on('chat:message', d => {
       if (d.account_id !== S.account?.id) return;
-      if (d.chat) { if ((d.chat.archived ? 1 : 0) === S.tab) S.chats.set(d.chat.jid, d.chat); renderChatList(); updateBadge(); }
+      if (d.chat) { if ((d.chat.archived ? 1 : 0) === S.tab) putChat(d.chat.jid, d.chat); renderChatList(); updateBadge(); }
       if (d.message.chat_jid === S.jid) {
         upsertLocal(d.message, true);
         if (d.live && !d.message.from_me && document.visibilityState === 'visible') markRead();
       } else if (d.live && d.inserted && !d.message.from_me && wantToast(d.chat)) toast(`${d.chat?.name || d.message.chat_jid}: ${(d.message.text || '').slice(0, 80)}`);
+    });
+    on('chat:bot', d => {
+      if (d.account_id !== S.account?.id) return;
+      if (d.chat && (d.chat.archived ? 1 : 0) === S.tab) { putChat(d.chat.jid, d.chat); renderChatList(); if (d.chat.jid === S.jid) renderThreadHead(); }
+      const who = d.chat?.name || d.chat_jid.replace(/@.*/, ''); const b = d.bot ? `${d.bot.emoji || '🤖'} ${d.bot.name}` : 'Bot';
+      if (d.type === 'handoff') toast(`${who} asked for a person — ${b} stepped aside. Reply yourself.`, 8000);
+      else if (d.type === 'error') toast(`${b} could not reply to ${who}: ${d.error}`, 8000);
+      else if (d.type === 'reply' && d.chat_jid !== S.jid) toast(`${b} → ${who}: ${(d.text || '').slice(0, 80)}`);
     });
     on('chat:call', d => { if (d.account_id === S.account?.id && d.status === 'offer') toast(`📞 Incoming ${d.isVideo ? 'video ' : ''}call from ${d.name} — answer it on your phone`, 8000); });
     on('chat:message-update', d => { if (d.account_id === S.account?.id && d.message.chat_jid === S.jid) upsertLocal(d.message, false); });
@@ -1068,6 +1080,228 @@
   }
   function urlB64(s) { const p = '='.repeat((4 - s.length % 4) % 4); const b = atob((s + p).replace(/-/g, '+').replace(/_/g, '/')); return Uint8Array.from(b, c => c.charCodeAt(0)); }
   window.addEventListener('resize', () => { if (S.jid) autosize(); });
+
+
+  // ── AI chat bots: dashboard + per-chat control ──────────────────────────────
+  const BOTS = { list: [], cur: null, dirty: false, countries: [], test: [], lastTest: null, defaults: null };
+  const COUNTRY_NAME = (code) => BOTS.countries.find(c => c.code === code)?.name || code;
+  const botLabel = (b) => `${b.emoji || '🤖'} ${b.name}`;
+  async function loadBots() {
+    const d = await api('/chats/bots');
+    BOTS.list = d.bots; BOTS.defaults = d.defaults; $('#bots-master').checked = d.enabled !== false;
+    if (!BOTS.countries.length) { try { BOTS.countries = await api('/chats/bots/countries'); } catch (_) {} }
+    renderBotList();
+  }
+  function openBots() {
+    show('s-bots'); $('#s-bots').classList.remove('editing'); $('#bots-editor').classList.add('hidden');
+    loadBots().catch(e => toast(e.message, 5000));
+  }
+  function closeBots() { if (BOTS.dirty && !confirm('Discard unsaved changes to this bot?')) return; BOTS.dirty = false; show('s-main'); loadChats(); }
+  $('#bots-back').addEventListener('click', closeBots);
+  $('#btn-bots').addEventListener('click', openBots);
+  $('#bots-master').addEventListener('change', async e => { try { S.settings = await put('/chats/settings', { botsEnabled: e.target.checked }); toast(e.target.checked ? 'Bots are on' : 'All bots are off'); } catch (err) { toast(err.message); } });
+  $('#bots-new').addEventListener('click', () => editBot({ ...BOTS.defaults, name: 'New bot', enabled: true, match: { ...BOTS.defaults.match, accounts: [] } }));
+  function summary(b) {
+    const m = b.match || {}; const parts = [];
+    if (m.accounts?.length) parts.push(m.accounts.map(id => S.accounts.find(a => a.id === id)?.label || S.accounts.find(a => a.id === id)?.display_name || 'account').join(', '));
+    if (m.platforms?.length) parts.push(m.platforms.map(p => PF[p]?.name || p).join('/'));
+    if (m.countries?.length) parts.push(m.countries.slice(0, 3).map(COUNTRY_NAME).join(', ') + (m.countries.length > 3 ? ' +' + (m.countries.length - 3) : ''));
+    if (m.excludeCountries?.length) parts.push('not ' + m.excludeCountries.slice(0, 3).map(COUNTRY_NAME).join(', '));
+    if (m.languages?.length) parts.push(m.languages.join(', '));
+    if (m.chatType === 'group') parts.push('groups'); else if (m.chatType === 'any') parts.push('groups too');
+    if (m.contacts === 'saved') parts.push('saved contacts'); if (m.contacts === 'unsaved') parts.push('unknown numbers');
+    if (m.keywords?.length) parts.push('“' + m.keywords.slice(0, 3).join('”, “') + '”');
+    if (m.firstContactOnly) parts.push('first message only');
+    if (m.hours) parts.push(`${m.hours.from}–${m.hours.to}`);
+    if (b.language?.mode === 'fixed') parts.push('→ ' + b.language.fixed);
+    return parts.length ? parts.join(' · ') : 'Any chat on any account';
+  }
+  function renderBotList() {
+    const el = $('#bots-list');
+    if (!BOTS.list.length) { el.innerHTML = '<div class="bots-empty muted">No bots yet.<br><br>A bot answers incoming messages in the chats its rules match — by account, country, language, hours… Create one with <b>+ New bot</b>, describe the character, try it in the <b>Test</b> tab, then enable it.</div>'; return; }
+    el.innerHTML = BOTS.list.map(b => { const s = b.stats || {}; return `
+      <div class="bot-card ${b.enabled ? '' : 'off'} ${BOTS.cur?.id === b.id ? 'on' : ''}" data-bot="${b.id}">
+        <div class="t"><span class="em">${esc(b.emoji || '🤖')}</span><b>${esc(b.name)}</b><span class="pr" title="Priority">P${b.priority || 0}</span><span class="switch ${b.enabled ? 'on' : ''}" data-toggle="${b.id}" title="${b.enabled ? 'Enabled — tap to disable' : 'Disabled — tap to enable'}"></span></div>
+        <div class="sum">${esc(summary(b))}</div>
+        <div class="st"><span><b>${s.today || 0}</b> today</span><span><b>${s.week || 0}</b> 7 days</span><span><b>${s.chats || 0}</b> chats</span>${s.handoffs ? `<span><b>${s.handoffs}</b> hand-offs</span>` : ''}${s.errors ? `<span class="err"><b>${s.errors}</b> errors</span>` : ''}</div>
+      </div>`; }).join('');
+  }
+  $('#bots-list').addEventListener('click', async e => {
+    const t = e.target.closest('[data-toggle]');
+    if (t) { e.stopPropagation(); const b = BOTS.list.find(x => x.id === t.dataset.toggle); try { await put('/chats/bots/' + b.id, { enabled: !b.enabled }); await loadBots(); if (BOTS.cur?.id === b.id) $('#bt-enabled').checked = !b.enabled; } catch (err) { toast(err.message); } return; }
+    const c = e.target.closest('[data-bot]'); if (!c) return;
+    if (BOTS.dirty && !confirm('Discard unsaved changes to the current bot?')) return;
+    editBot(BOTS.list.find(x => x.id === c.dataset.bot));
+  });
+
+  // ── Editor ──────────────────────────────────────────────────────────────────
+  const F = {   // field id → path in the bot object
+    'bt-name': 'name', 'bt-emoji': 'emoji', 'bt-enabled': 'enabled', 'bt-priority': 'priority',
+    'bt-p-name': 'persona.name', 'bt-p-role': 'persona.role', 'bt-p-company': 'persona.company', 'bt-p-traits': 'persona.traits', 'bt-p-background': 'persona.background', 'bt-p-goals': 'persona.goals', 'bt-p-rules': 'persona.rules', 'bt-p-opening': 'persona.opening',
+    'bt-s-formality': 'style.formality', 'bt-s-warmth': 'style.warmth', 'bt-s-humour': 'style.humour', 'bt-s-emoji': 'style.emoji', 'bt-s-length': 'style.length', 'bt-s-bubbles': 'style.bubbles', 'bt-s-notes': 'style.notes', 'bt-s-custom': 'style.customPrompt', 'bt-s-replace': 'style.replacePrompt',
+    'bt-l-mode': 'language.mode', 'bt-l-fixed': 'language.fixed', 'bt-l-fallback': 'language.fallback',
+    'bt-m-chattype': 'match.chatType', 'bt-m-contacts': 'match.contacts', 'bt-m-keywords': 'match.keywords', 'bt-m-first': 'match.firstContactOnly',
+    'bt-b-debounce': 'behaviour.debounceSec', 'bt-b-dmin': 'behaviour.delayMinSec', 'bt-b-dmax': 'behaviour.delayMaxSec', 'bt-b-typing': 'behaviour.typing', 'bt-b-maxage': 'behaviour.maxAgeMin',
+    'bt-b-maxday': 'behaviour.maxPerDay', 'bt-b-maxtotal': 'behaviour.maxTotal', 'bt-b-history': 'behaviour.historyLimit', 'bt-b-media': 'behaviour.replyToMedia',
+    'bt-b-handoffmin': 'behaviour.handoffMinutes', 'bt-b-handoffkw': 'behaviour.handoffKeywords', 'bt-b-handoffmsg': 'behaviour.handoffMessage', 'bt-b-pausehrs': 'behaviour.handoffPauseHours', 'bt-b-notify': 'behaviour.notifyHandoff',
+    'bt-k': 'knowledge', 'bt-mo-provider': 'model.provider', 'bt-mo-model': 'model.model', 'bt-mo-temp': 'model.temperature', 'bt-mo-max': 'model.maxTokens',
+  };
+  const getPath = (o, p) => p.split('.').reduce((a, k) => a == null ? a : a[k], o);
+  const setPath = (o, p, v) => { const ks = p.split('.'); let a = o; for (const k of ks.slice(0, -1)) a = a[k] = a[k] || {}; a[ks[ks.length - 1]] = v; };
+  const CHIPS = {};
+  function chips(id, { options, values, placeholder }) {
+    const el = $('#' + id); const state = { values: [...(values || [])], options };
+    CHIPS[id] = state;
+    const dl = id + '-dl'; let dlEl = $('#' + dl); if (!dlEl) { dlEl = document.createElement('datalist'); dlEl.id = dl; document.body.appendChild(dlEl); }
+    dlEl.innerHTML = options.map(o => `<option value="${esc(o.label)}"></option>`).join('');
+    const render = () => { el.innerHTML = state.values.map(v => `<span class="chip">${esc(options.find(o => o.v === v)?.label || v)}<button type="button" data-rm="${esc(v)}" title="Remove">✕</button></span>`).join('') + `<input list="${dl}" placeholder="${esc(placeholder || 'Type to add…')}" autocomplete="off">`; };
+    render();
+    el.onclick = e => { const b = e.target.closest('[data-rm]'); if (b) { state.values = state.values.filter(v => v !== b.dataset.rm); render(); BOTS.dirty = true; } };
+    el.onchange = e => { if (e.target.tagName !== 'INPUT') return; const raw = e.target.value.trim(); if (!raw) return; const o = options.find(x => x.label.toLowerCase() === raw.toLowerCase() || x.v.toLowerCase() === raw.toLowerCase()); const v = o ? o.v : raw; if (!state.values.includes(v)) state.values.push(v); render(); BOTS.dirty = true; el.querySelector('input').focus(); };
+    el.onkeydown = e => { if (e.key === 'Enter' && e.target.tagName === 'INPUT') { e.preventDefault(); el.onchange(e); } };
+  }
+  function editBot(bot) {
+    BOTS.cur = JSON.parse(JSON.stringify(bot)); BOTS.dirty = false; BOTS.test = []; BOTS.lastTest = null;
+    const b = BOTS.cur;
+    $('#bots-editor').classList.remove('hidden'); $('#s-bots').classList.add('editing'); renderBotList();
+    for (const t of $$('.be-tabs .tab')) t.classList.toggle('on', t.dataset.bt === 'character');
+    for (const p of $$('.be-tab')) p.classList.toggle('hidden', p.dataset.bt !== 'character');
+    // language selects
+    const langOpts = S.meta.languages.map(l => `<option>${esc(l)}</option>`).join('');
+    $('#bt-l-fixed').innerHTML = langOpts; $('#bt-l-fallback').innerHTML = langOpts;
+    $('#bt-mo-provider').innerHTML = '<option value="">Same as translation settings</option>' + S.meta.providers.map(p => `<option value="${p.id}">${esc(p.display)}</option>`).join('');
+    $('#bt-mo-info').textContent = S.meta.provider ? `Default in use: ${S.meta.provider.display} · ${S.meta.provider.model}. Keys live in Bibix → Settings → AI providers.` : 'No provider key found — add one in Bibix → Settings → AI providers.';
+    for (const [id, path] of Object.entries(F)) {
+      const el = $('#' + id); if (!el) continue; let v = getPath(b, path);
+      if (Array.isArray(v)) v = v.join(', ');
+      if (el.type === 'checkbox') el.checked = !!v; else el.value = v ?? '';
+    }
+    $('#bt-mo-temp-v').textContent = Number(b.model?.temperature ?? 0.8).toFixed(2);
+    $('#bt-l-fixed-wrap').classList.toggle('hidden', b.language?.mode !== 'fixed'); $('#bt-l-fallback-wrap').classList.toggle('hidden', b.language?.mode === 'fixed');
+    $('#bt-del').classList.toggle('hidden', !b.id); $('#bt-dup').classList.toggle('hidden', !b.id);
+    // accounts + platforms
+    $('#bt-m-accounts').innerHTML = S.accounts.map(a => `<label class="chk"><input type="checkbox" data-acc="${a.id}" ${(b.match?.accounts || []).includes(a.id) ? 'checked' : ''}> ${esc(PF[a.platform]?.icon || '')} ${esc(a.label || a.display_name || a.phone || a.id.slice(0, 6))}</label>`).join('') || '<span class="muted">No accounts linked yet</span>';
+    for (const x of $$('#bt-m-accounts input, [data-pf]')) x.onchange = () => { BOTS.dirty = true; };
+    for (const x of $$('[data-pf]')) x.checked = (b.match?.platforms || []).includes(x.dataset.pf);
+    chips('bt-m-countries', { options: BOTS.countries.map(c => ({ v: c.code, label: `${c.name} (+${c.dial})` })), values: b.match?.countries, placeholder: 'Add a country…' });
+    chips('bt-m-exclude', { options: BOTS.countries.map(c => ({ v: c.code, label: `${c.name} (+${c.dial})` })), values: b.match?.excludeCountries, placeholder: 'Exclude a country…' });
+    chips('bt-m-languages', { options: S.meta.languages.map(l => ({ v: l, label: l })), values: b.match?.languages, placeholder: 'Add a language…' });
+    // hours
+    const h = b.match?.hours; $('#bt-h-on').checked = !!h; $('#bt-h-from').value = h?.from || '09:00'; $('#bt-h-to').value = h?.to || '18:00';
+    $('#bt-h-tz').value = h?.tz || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC';
+    for (const d of $$('#bt-h-days button')) d.classList.toggle('on', !h?.days?.length || h.days.map(Number).includes(Number(d.dataset.d)));
+    if (!$('#dl-tz').children.length) { try { $('#dl-tz').innerHTML = (Intl.supportedValuesOf ? Intl.supportedValuesOf('timeZone') : ['UTC']).map(z => `<option value="${z}">`).join(''); } catch (_) {} }
+    // test context
+    $('#bt-t-country').innerHTML = '<option value="">—</option>' + BOTS.countries.map(c => `<option value="${c.code}">${esc(c.name)}</option>`).join('');
+    $('#bt-t-log').innerHTML = '<div class="muted">Write as the contact would. Nothing is sent anywhere — this uses the bot exactly as configured above (unsaved changes included).</div>';
+    $('#bt-t-prompt').textContent = '';
+    renderPromptPreview();
+  }
+  function collectBot() {
+    const b = JSON.parse(JSON.stringify(BOTS.cur));
+    for (const [id, path] of Object.entries(F)) {
+      const el = $('#' + id); if (!el) continue;
+      let v = el.type === 'checkbox' ? el.checked : el.value;
+      if (el.type === 'number' || el.type === 'range') v = v === '' ? null : Number(v);
+      if (path === 'match.keywords' || path === 'behaviour.handoffKeywords') v = String(v || '').split(',').map(s => s.trim()).filter(Boolean);
+      if (path === 'style.bubbles') v = Number(v) || 1;
+      if (path === 'model.provider' && !v) v = null;
+      setPath(b, path, v);
+    }
+    b.match.accounts = $$('#bt-m-accounts input:checked').map(x => x.dataset.acc);
+    b.match.platforms = $$('[data-pf]:checked').map(x => x.dataset.pf);
+    b.match.countries = CHIPS['bt-m-countries']?.values || []; b.match.excludeCountries = CHIPS['bt-m-exclude']?.values || []; b.match.languages = CHIPS['bt-m-languages']?.values || [];
+    b.match.hours = $('#bt-h-on').checked ? { from: $('#bt-h-from').value || '09:00', to: $('#bt-h-to').value || '18:00', tz: $('#bt-h-tz').value.trim() || 'UTC', days: $$('#bt-h-days button.on').map(x => Number(x.dataset.d)) } : null;
+    delete b.stats;
+    return b;
+  }
+  function renderPromptPreview() {
+    const b = collectBot(); const p = b.persona, s = b.style;
+    const who = [p.name && `Your name is ${p.name}.`, p.role && `You are ${p.role}${p.company ? ' at ' + p.company : ''}.`, p.background && `Background: ${p.background}`, p.traits && `Personality: ${p.traits}`].filter(Boolean).join(' ');
+    $('#bt-prompt-preview').textContent = s.replacePrompt && s.customPrompt ? s.customPrompt + '\n\n(+ language and format rules)' : [
+      'You are chatting on WhatsApp as a real person, replying to messages from <contact> in <country>. Never say you are an AI, a bot or an assistant; stay in character.', who,
+      `Tone: ${s.formality}; ${s.warmth}; humour: ${s.humour}; emojis: ${s.emoji}. Length: ${s.length}. Write like people text: natural, no headings, no bullet lists, no markdown.`,
+      s.notes && `Style notes: ${s.notes}`, p.goals && `What you want to achieve in this conversation: ${p.goals}`, p.rules && `Rules you must follow: ${p.rules}`, p.opening && `If this is the start of the conversation, open along these lines: ${p.opening}`,
+      b.knowledge && `Facts you know (use them when relevant, never invent others):\n${b.knowledge}`, s.customPrompt && `Additional instructions: ${s.customPrompt}`,
+      b.language.mode === 'fixed' ? `Always reply in ${b.language.fixed}.` : `Reply in the language the contact writes in; if you cannot tell, use ${b.language.fallback}.`, '(+ output format rules)',
+    ].filter(Boolean).join('\n\n');
+  }
+  $('#bots-editor').addEventListener('input', e => { if (e.target.closest('.test-row, .test-ctx')) return; BOTS.dirty = true; if (e.target.id === 'bt-mo-temp') $('#bt-mo-temp-v').textContent = Number(e.target.value).toFixed(2); if (e.target.closest('[data-bt="style"], [data-bt="character"], [data-bt="knowledge"], [data-bt="language"]')) renderPromptPreview(); });
+  $('#bt-l-mode').addEventListener('change', e => { $('#bt-l-fixed-wrap').classList.toggle('hidden', e.target.value !== 'fixed'); $('#bt-l-fallback-wrap').classList.toggle('hidden', e.target.value === 'fixed'); });
+  $('#bt-h-days').addEventListener('click', e => { const b = e.target.closest('button'); if (b) { b.classList.toggle('on'); BOTS.dirty = true; } });
+  for (const t of $$('.be-tabs .tab')) t.addEventListener('click', () => {
+    for (const x of $$('.be-tabs .tab')) x.classList.toggle('on', x === t);
+    for (const p of $$('.be-tab')) p.classList.toggle('hidden', p.dataset.bt !== t.dataset.bt);
+    if (t.dataset.bt === 'activity') loadBotActivity();
+    if (t.dataset.bt === 'style') renderPromptPreview();
+  });
+  $('#be-back').addEventListener('click', () => { if (BOTS.dirty && !confirm('Discard unsaved changes?')) return; BOTS.dirty = false; BOTS.cur = null; $('#bots-editor').classList.add('hidden'); $('#s-bots').classList.remove('editing'); renderBotList(); });
+  $('#bt-save').addEventListener('click', async () => {
+    const b = collectBot(); if (!b.name.trim()) return toast('Give the bot a name');
+    try {
+      const saved = b.id ? await put('/chats/bots/' + b.id, b) : await api('/chats/bots', { body: b });
+      BOTS.cur = saved; BOTS.dirty = false; await loadBots(); $('#bt-del').classList.remove('hidden'); $('#bt-dup').classList.remove('hidden'); toast('Saved');
+    } catch (e) { toast(e.message, 5000); }
+  });
+  $('#bt-del').addEventListener('click', async () => { if (!BOTS.cur?.id || !confirm(`Delete "${BOTS.cur.name}"? Chats pinned to it go back to automatic.`)) return; try { await api('/chats/bots/' + BOTS.cur.id, { method: 'DELETE' }); BOTS.cur = null; BOTS.dirty = false; $('#bots-editor').classList.add('hidden'); $('#s-bots').classList.remove('editing'); await loadBots(); toast('Deleted'); } catch (e) { toast(e.message); } });
+  $('#bt-dup').addEventListener('click', async () => { if (!BOTS.cur?.id) return; try { const c = await api('/chats/bots/' + BOTS.cur.id + '/duplicate', { body: {} }); await loadBots(); editBot(c); toast('Copy created (disabled)'); } catch (e) { toast(e.message); } });
+  // test console
+  async function testSend() {
+    const inp = $('#bt-t-in'); const text = inp.value.trim(); if (!text) return; inp.value = '';
+    BOTS.test.push({ role: 'contact', text }); renderTest(); $('#bt-t-send').disabled = true;
+    const ctx = { contactName: $('#bt-t-name').value.trim() || 'Alex', countryCode: $('#bt-t-country').value || null, countryName: COUNTRY_NAME($('#bt-t-country').value), platform: $('#bt-t-platform').value };
+    try {
+      const r = await api('/chats/bots/' + (BOTS.cur?.id || 'draft') + '/test', { body: { bot: collectBot(), messages: BOTS.test, context: ctx } });
+      BOTS.lastTest = r;
+      if (!r.bubbles.length) BOTS.test.push({ role: 'sys', text: 'The bot chose not to reply (NOREPLY).' });
+      for (const t of r.bubbles) BOTS.test.push({ role: 'bot', text: t, meta: `${r.lang || ''} · ${r.model} · ${r.latencyMs} ms` });
+      $('#bt-t-prompt').textContent = 'SYSTEM PROMPT\n' + r.system + '\n\nRAW OUTPUT\n' + r.raw;
+    } catch (e) { BOTS.test.push({ role: 'sys', text: 'Error: ' + e.message }); }
+    $('#bt-t-send').disabled = false; renderTest();
+  }
+  function renderTest() {
+    const el = $('#bt-t-log');
+    el.innerHTML = BOTS.test.map(m => `<div class="tb ${m.role}">${esc(m.text)}${m.meta ? `<small>${esc(m.meta)}</small>` : ''}</div>`).join('') || '<div class="muted">Write as the contact would.</div>';
+    el.scrollTop = el.scrollHeight;
+  }
+  $('#bt-t-send').addEventListener('click', testSend);
+  $('#bt-t-in').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); testSend(); } });
+  $('#bt-t-reset').addEventListener('click', () => { BOTS.test = []; renderTest(); $('#bt-t-prompt').textContent = ''; });
+  async function loadBotActivity() {
+    const s = BOTS.list.find(b => b.id === BOTS.cur?.id)?.stats || {};
+    $('#bt-stats').innerHTML = [['Replies today', s.today || 0], ['Replies, 7 days', s.week || 0], ['Chats, 7 days', s.chats || 0], ['Hand-offs', s.handoffs || 0], ['Errors', s.errors || 0]].map(([l, v]) => `<div><b>${v}</b><span>${l}</span></div>`).join('');
+    if (!BOTS.cur?.id) { $('#bt-log').innerHTML = '<p class="muted">Save the bot first.</p>'; return; }
+    try {
+      const rows = await api('/chats/bots/log?limit=100&bot_id=' + BOTS.cur.id);
+      $('#bt-log').innerHTML = rows.map(r => { const chat = S.chats.get(r.chat_jid); return `<div class="r"><div class="h"><span>${new Date(r.created_at).toLocaleString()}</span><span>${esc(chat?.name || r.chat_jid.replace(/@.*/, ''))}</span><span>${esc(r.event)}</span>${r.lang ? `<span>${esc(r.lang)}</span>` : ''}${r.latency_ms ? `<span>${r.latency_ms} ms</span>` : ''}</div>${r.in_text ? `<div class="in">↓ ${esc(r.in_text.slice(0, 160))}</div>` : ''}${r.out_text ? `<div class="out">↑ ${esc(r.out_text.slice(0, 300))}</div>` : ''}${r.error ? `<div class="e">${esc(r.error)}</div>` : ''}</div>`; }).join('') || '<p class="muted">Nothing yet. Once the bot answers a chat, every reply, skip and hand-off is listed here.</p>';
+    } catch (e) { $('#bt-log').innerHTML = `<p class="muted">${esc(e.message)}</p>`; }
+  }
+
+  // ── Per-chat bot menu (⋮ in the thread header) ──────────────────────────────
+  $('#btn-thread-menu').addEventListener('click', async e => {
+    e.stopPropagation(); const c = chat(); if (!c) return;
+    const menu = $('#thread-menu');
+    if (!BOTS.list.length) { try { await loadBots(); } catch (_) {} }
+    const paused = c.bot_paused_until && c.bot_paused_until > Date.now();
+    const items = [`<div class="mh">Bot for this chat</div>`,
+      `<button data-bm="auto" class="${!c.bot_mode ? 'on' : ''}">⚙ Automatic (rules)${!c.bot_mode && c.bot ? ' → ' + esc(botLabel(c.bot)) : ''}</button>`,
+      ...BOTS.list.map(b => `<button data-bm="${b.id}" class="${c.bot_mode === b.id ? 'on' : ''}">${esc(botLabel(b))}${b.enabled ? '' : ' <small class="muted">(disabled)</small>'}</button>`),
+      `<button data-bm="off" class="${c.bot_mode === 'off' ? 'on' : ''}">⛔ No bot here</button>`,
+      paused ? `<button data-bm="resume">▶ Resume the bot now <small class="muted">(paused until ${new Date(c.bot_paused_until).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})</small></button>` : `<button data-bm="pause">⏸ Pause the bot here for 24 h</button>`,
+      `<button data-bm="why">❓ Why this bot?</button>`, `<button data-bm="manage">🤖 Manage bots…</button>`];
+    menu.innerHTML = items.join(''); menu.classList.remove('hidden'); placeMenu(menu, e);
+  });
+  $('#thread-menu').addEventListener('click', async e => {
+    const b = e.target.closest('[data-bm]'); if (!b) return; closeMenus(); const c = chat(); if (!c) return;
+    const v = b.dataset.bm; const url = `/chats/accounts/${S.account.id}/chats/${encodeURIComponent(S.jid)}/bot`;
+    try {
+      if (v === 'manage') return openBots();
+      if (v === 'why') { const r = await api(url); return toast(r.bot ? `${botLabel(r.bot)} — ${r.reason}${r.paused ? ' (paused)' : ''}` : `No bot: ${r.reason}`, 7000); }
+      const body = v === 'auto' ? { mode: null } : v === 'off' ? { mode: 'off' } : v === 'resume' ? { resume: true } : v === 'pause' ? { pauseHours: 24 } : { mode: v };
+      const updated = await put(url, body); putChat(updated.jid, updated); renderChatList(); renderThreadHead();
+      toast(v === 'auto' ? 'Automatic: ' + (updated.bot ? botLabel(updated.bot) + ' answers here' : 'no bot matches this chat') : v === 'off' ? 'No bot in this chat' : v === 'resume' ? 'Bot resumed' : v === 'pause' ? 'Bot paused for 24 h' : 'Pinned to ' + botLabel(updated.bot || {}));
+    } catch (err) { toast(err.message, 5000); }
+  });
 
   boot().catch(e => { console.error(e); toast(e.message, 6000); });
 })();

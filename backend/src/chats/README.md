@@ -178,3 +178,36 @@ app → worker as a raw body (`x-chats-meta` header), up to 80 MB, 10 files per 
 ## Message ids
 WhatsApp message ids are the WA ids; Telegram ids are per peer, so `msg_id` is `"<jid>:<id>"` with
 `jid = "<markedPeerId>@tg"`. Call-log lines are `"call:<callId>"`.
+
+
+## AI chat bots (`bots.js`)
+
+A bot = character + style + language policy + targeting rules + behaviour, stored per user in `chat_bots` (JSON `data`
+column; `routes/chats.js` → `/api/chats/bots…`). The dashboard is the 🤖 button in the Chats PWA (list, editor with
+Character / Style / Language / Targeting / Behaviour / Knowledge / Model / Test / Activity tabs).
+
+How a reply happens (`createBotEngine`, app process only — it needs the DB and the AI keys):
+
+1. `handleEvent('messages')` stores a live incoming message and calls `bots.onIncoming()`.
+2. `pick()` chooses the bot: the chat's own setting (`chat_chats.bot_mode`: `off`, a bot id, or NULL = automatic) →
+   enabled bots by priority, first whose rules match: accounts, platforms, country of the phone number
+   (`phoneCountry.js`, WhatsApp only), language (the chat's "Send in" language or a script/word heuristic), chat type,
+   saved/unsaved contact, keywords, first-contact-only, active hours in a time zone.
+3. Messages are debounced per chat (`behaviour.debounceSec`) so a burst gets one answer. Messages older than
+   `maxAgeMin` (reconnect backlog) are ignored.
+4. `respond()` steps aside when: the chat is paused (`bot_paused_until`), a person wrote from our side within
+   `handoffMinutes` (`chat_messages.bot_id IS NULL` = human), the contact used a hand-off keyword (pauses the chat
+   `handoffPauseHours`, optional message + push), or the per-chat daily/total cap is reached.
+5. The prompt = generated persona/style/goals/rules/knowledge text (or a custom prompt), language rule (auto = mirror
+   the contact, fixed = always X), output format (`LANG: …` first line, `---` between bubbles, `NOREPLY` allowed),
+   plus the last `historyLimit` messages as a transcript. Provider/model: the bot's own or the translation settings.
+6. Bubbles are sent one by one with a typing indicator and a length-based delay; stored with `bot_id`; logged in
+   `chat_bot_log` (replies, skips, hand-offs, errors → Activity tab / stats). The detected language is adopted as the
+   chat's "Send in" language unless the user fixed one by hand.
+
+Per chat: ⋮ in the thread header → Automatic / a specific bot / No bot / pause 24 h / resume / "Why this bot?".
+Master switch: settings `botsEnabled`. The Test tab (`POST /bots/:id/test`, `draft` for unsaved) runs the same prompt
+without sending anything.
+
+Instagram DMs are not handled here: the Chats module connects WhatsApp and Telegram accounts. The engine is
+platform-agnostic (it needs a `client.send` and a stored transcript), so an Instagram inbox can plug in later.

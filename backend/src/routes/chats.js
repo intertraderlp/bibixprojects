@@ -31,6 +31,12 @@
 //              POST   /api/chats/messages/:id/translate
 //              POST   /api/chats/transcribe { audio (base64), mime, language? }   speech → text for call captions
 //              GET    /api/chats/meta                           languages, provider in use, recent languages
+//   Bots       GET    /api/chats/bots                          my AI bots (+ stats)      POST creates, PUT/DELETE /bots/:id
+//              POST   /api/chats/bots/:id/duplicate
+//              POST   /api/chats/bots/:id/test { messages:[{role:'contact'|'bot',text}], context:{countryCode,language,platform,contactName} }  reply without sending
+//              GET    /api/chats/bots/log?bot_id=&limit=        what the bots did
+//              GET    /api/chats/bots/countries                 country list for the targeting picker
+//              PUT    /api/chats/accounts/:id/chats/:jid/bot { mode: null | 'off' | <bot id>, resume?: true, pauseHours?: n }
 //   Settings   GET/PUT /api/chats/settings                      per-user (my language, defaults, style, provider)
 //              GET/PUT /api/chats/quick-answers
 //   Internal   POST   /api/chats/internal/events               worker → app (x-chats-secret)
@@ -50,6 +56,8 @@ const store = require('../chats/store');
 const { createClient, SECRET, WORKER_URL } = require('../chats/client');
 const tr = require('../chats/translate');
 const { sendPushToUser } = require('../services/pushNotifications');
+const { createBotEngine } = require('../chats/bots');
+const { COUNTRIES } = require('../chats/phoneCountry');
 
 const router = express.Router();
 const wrap = (fn) => async (req, res) => {
@@ -108,6 +116,8 @@ function handleEvent(ev) {
             const title = chat?.name || m.chatJid;
             sendPushToUser(userId, title, (m.isGroup && m.senderName ? m.senderName + ': ' : '') + (row.text || previewKind(row.kind)), { url: '/chats/?account=' + accountId + '&chat=' + encodeURIComponent(m.chatJid), type: 'chat' });
           }
+          // AI bots: maybe answer (debounced; the engine checks rules, hand-off and caps itself)
+          bots.onIncoming({ userId, account: acc, chat, row, settings });
         }
       }
       return;
@@ -159,6 +169,7 @@ function shouldNotify(settings, chat, isGroup) {
 function previewKind(kind) { return ({ image: '📷 Photo', video: '🎥 Video', audio: '🎤 Voice message', sticker: 'Sticker', document: '📄 Document', contact: '👤 Contact', location: '📍 Location', poll: '📊 Poll' })[kind] || 'New message'; }
 
 const client = createClient(handleEvent);
+const bots = createBotEngine({ store, client, sse, sendPushToUser });
 
 // Translate one incoming message into "my language", store it, and (maybe) adopt the detected
 // language as the chat's send language — mirrors noteDetectedLanguage() in the extension.
@@ -300,8 +311,8 @@ router.post('/accounts/:id/logout', wrap(async (req) => {
 
 // ── Chats & messages ─────────────────────────────────────────────────────────
 router.get('/accounts/:id/chats', wrap(async (req) => {
-  myAccount(req);
-  return store.listChats(req.params.id, { archived: req.query.archived === 'all' ? 'all' : req.query.archived === '1' ? 1 : 0 });
+  const acc = myAccount(req);
+  return bots.annotate(req.user.id, acc, store.listChats(req.params.id, { archived: req.query.archived === 'all' ? 'all' : req.query.archived === '1' ? 1 : 0 }));
 }));
 router.post('/accounts/:id/chats/new', wrap(async (req) => {
   const acc = myAccount(req);
@@ -391,6 +402,20 @@ router.put('/accounts/:id/chats/:jid/prefs', wrap(async (req) => {
   const chat = store.updateChatPrefs(req.params.id, req.params.jid, patch);
   sse.emit(req.user.id, 'chat:chats', { account_id: req.params.id, chats: [chat] });
   return chat;
+}));
+router.put('/accounts/:id/chats/:jid/bot', wrap(async (req) => {
+  const acc = myAccount(req);
+  const b = req.body || {}; const patch = {};
+  if ('mode' in b) {
+    if (b.mode && b.mode !== 'off' && !store.getUserBot(req.user.id, b.mode)) throw Object.assign(new Error('Unknown bot'), { status: 400 });
+    patch.bot_mode = b.mode || null;
+  }
+  if (b.resume) patch.bot_paused_until = null;
+  if (b.pauseHours) patch.bot_paused_until = Date.now() + Number(b.pauseHours) * 3600000;
+  const chat = store.updateChatPrefs(req.params.id, req.params.jid, patch);
+  const [annotated] = bots.annotate(req.user.id, acc, [chat]);
+  sse.emit(req.user.id, 'chat:chats', { account_id: req.params.id, chats: [annotated] });
+  return annotated;
 }));
 router.post('/accounts/:id/chats/:jid/translate-recent', wrap(async (req) => {
   myAccount(req);
@@ -489,15 +514,56 @@ router.get('/meta', wrap(async (req) => {
     provider: tr.providerInfo(req.user.id, settings), providers: tr.listProviders(), defaultModels: tr.CHAT_DEFAULT_MODEL,
     worker: await client.health(), mode: client.mode, workerUrl: WORKER_URL || null,
     unread: store.totalUnread(req.user.id),
+    bots: { count: store.listBots(req.user.id).length, enabled: settings.botsEnabled !== false },
     vapid: process.env.VAPID_PUBLIC_KEY || null,
   };
+}));
+
+// ── AI bots ──────────────────────────────────────────────────────────────────
+router.get('/bots', wrap(async (req) => {
+  const stats = store.botStats(req.user.id);
+  return { bots: store.listBots(req.user.id).map(b => ({ ...bots.normalizeBot(b), stats: stats[b.id] || null })), enabled: store.getSettings(req.user.id).botsEnabled !== false, defaults: bots.DEFAULTS };
+}));
+router.get('/bots/countries', wrap(async () => COUNTRIES));
+router.get('/bots/log', wrap(async (req) => store.botLog(req.user.id, { botId: req.query.bot_id || null, accountId: req.query.account_id || null, chatJid: req.query.chat_jid || null, limit: Math.min(500, Number(req.query.limit) || 100) })));
+router.post('/bots', wrap(async (req) => {
+  const b = bots.normalizeBot(req.body || {}); delete b.id; delete b.stats;
+  return store.saveBot(req.user.id, b);
+}));
+router.get('/bots/:id', wrap(async (req) => {
+  const b = store.getUserBot(req.user.id, req.params.id); if (!b) throw Object.assign(new Error('Not found'), { status: 404 });
+  return bots.normalizeBot(b);
+}));
+router.put('/bots/:id', wrap(async (req) => {
+  const cur = store.getUserBot(req.user.id, req.params.id); if (!cur) throw Object.assign(new Error('Not found'), { status: 404 });
+  const b = bots.normalizeBot({ ...cur, ...(req.body || {}), id: cur.id }); delete b.stats;
+  return store.saveBot(req.user.id, b);
+}));
+router.delete('/bots/:id', wrap(async (req) => ({ ok: store.deleteBot(req.user.id, req.params.id) })));
+router.post('/bots/:id/duplicate', wrap(async (req) => {
+  const cur = store.getUserBot(req.user.id, req.params.id); if (!cur) throw Object.assign(new Error('Not found'), { status: 404 });
+  const b = bots.normalizeBot({ ...cur, name: cur.name + ' (copy)', enabled: false }); delete b.id; delete b.stats;
+  return store.saveBot(req.user.id, b);
+}));
+router.post('/bots/:id/test', wrap(async (req) => {
+  // the editor may test unsaved changes: body.bot overrides the stored one
+  const cur = req.params.id === 'draft' ? {} : store.getUserBot(req.user.id, req.params.id);
+  if (!cur) throw Object.assign(new Error('Not found'), { status: 404 });
+  return bots.simulate(req.user.id, { ...cur, ...(req.body?.bot || {}) }, { messages: req.body?.messages || [], context: req.body?.context || {} });
+}));
+// which bot would answer a given chat, and why (debugging the rules)
+router.get('/accounts/:id/chats/:jid/bot', wrap(async (req) => {
+  const acc = myAccount(req);
+  const chat = store.getChat(req.params.id, req.params.jid); if (!chat) throw Object.assign(new Error('Not found'), { status: 404 });
+  const r = bots.pick(req.user.id, acc, chat, chat.last_message_from_me ? '' : (chat.last_message_text || ''), { firstContact: store.countIncoming(acc.id, chat.jid) <= 1 });
+  return { bot: r.bot ? { id: r.bot.id, name: r.bot.name, emoji: r.bot.emoji } : null, reason: r.reason, paused: !!r.paused, context: r.ctx && { platform: r.ctx.platform, country: r.ctx.country, language: r.ctx.language, isGroup: r.ctx.isGroup, saved: r.ctx.saved } };
 }));
 
 // ── Settings & quick answers ─────────────────────────────────────────────────
 router.get('/settings', wrap(async (req) => store.getSettings(req.user.id)));
 router.put('/settings', wrap(async (req) => {
   const allowed = ['myLanguage', 'targetLanguage', 'autoIncoming', 'initialIncoming', 'showOriginalOutgoing', 'enterTranslates', 'style', 'provider', 'model', 'notifications',
-    'notifyGroups', 'notifyArchived', 'notifyMuted', 'sttProvider', 'telegramApiId', 'telegramApiHash'];
+    'notifyGroups', 'notifyArchived', 'notifyMuted', 'sttProvider', 'telegramApiId', 'telegramApiHash', 'botsEnabled'];
   const patch = {}; for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
   return store.setSettings(req.user.id, patch);
 }));

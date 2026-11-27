@@ -105,6 +105,43 @@ function addColumn(table, col, def) {
 }
 addColumn('chat_messages', 'forwarded', 'INTEGER NOT NULL DEFAULT 0');
 addColumn('chat_messages', 'media', 'TEXT');
+// AI chat bots: which bot sent a message (NULL = a human), and per-chat bot control
+addColumn('chat_messages', 'bot_id', 'TEXT');
+addColumn('chat_chats', 'bot_mode', 'TEXT');            // NULL = automatic (rules), 'off' = never, else a bot id
+addColumn('chat_chats', 'bot_paused_until', 'INTEGER');  // human took over / contact asked for a person
+addColumn('chat_chats', 'bot_last_id', 'TEXT');          // last bot that replied here (shown in the list)
+db.exec(`
+  CREATE TABLE IF NOT EXISTS chat_bots (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    enabled INTEGER NOT NULL DEFAULT 1,
+    priority INTEGER NOT NULL DEFAULT 0,
+    data TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_chat_bots_user ON chat_bots(user_id, priority);
+  CREATE TABLE IF NOT EXISTS chat_bot_log (
+    id TEXT PRIMARY KEY,
+    user_id TEXT NOT NULL,
+    bot_id TEXT NOT NULL,
+    account_id TEXT NOT NULL,
+    chat_jid TEXT NOT NULL,
+    message_id TEXT,
+    in_text TEXT,
+    out_text TEXT,
+    lang TEXT,
+    provider TEXT,
+    model TEXT,
+    latency_ms INTEGER,
+    error TEXT,
+    event TEXT NOT NULL DEFAULT 'reply',
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_chat_bot_log_bot ON chat_bot_log(bot_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_chat_bot_log_chat ON chat_bot_log(account_id, chat_jid, created_at);
+`);
 
 const now = () => Date.now();
 
@@ -223,6 +260,7 @@ function shapeChat(r) {
     archived: !!r.archived, pinned: !!r.pinned, muted: !!r.muted,
     send_language: r.send_language || null, send_language_detected: !!r.send_language_detected, auto_incoming: r.auto_incoming == null ? null : !!r.auto_incoming,
     picture_url: r.picture_url || null,
+    bot_mode: r.bot_mode || null, bot_paused_until: r.bot_paused_until || null, bot_last_id: r.bot_last_id || null,
   };
 }
 function listChats(accountId, { archived = 0, limit = 500 } = {}) {
@@ -259,6 +297,9 @@ function updateChatPrefs(accountId, jid, patch) {
   if ('send_language' in patch) { cols.push('send_language = ?', 'send_language_detected = ?', 'lang_updated_at = ?'); vals.push(patch.send_language || null, patch.send_language_detected ? 1 : 0, now()); }
   if ('auto_incoming' in patch) { cols.push('auto_incoming = ?'); vals.push(patch.auto_incoming == null ? null : (patch.auto_incoming ? 1 : 0)); }
   if ('picture_url' in patch) { cols.push('picture_url = ?'); vals.push(patch.picture_url || null); }
+  if ('bot_mode' in patch) { cols.push('bot_mode = ?'); vals.push(patch.bot_mode || null); }
+  if ('bot_paused_until' in patch) { cols.push('bot_paused_until = ?'); vals.push(patch.bot_paused_until || null); }
+  if ('bot_last_id' in patch) { cols.push('bot_last_id = ?'); vals.push(patch.bot_last_id || null); }
   if (!cols.length) return getChat(accountId, jid);
   db.prepare(`UPDATE chat_chats SET ${cols.join(', ')} WHERE account_id = ? AND jid = ?`).run(...vals, accountId, jid);
   return getChat(accountId, jid);
@@ -281,6 +322,7 @@ function shapeMessage(r) {
     quoted: r.quoted_id || r.quoted_text ? { id: r.quoted_id, text: r.quoted_text } : null,
     original_text: r.original_text || null, forwarded: !!r.forwarded, media: parseMedia(r.media),
     translation: r.translation || null, translation_lang: r.translation_lang || null, translation_target: r.translation_target || null,
+    bot_id: r.bot_id || null,
   };
 }
 function parseMedia(s) { if (!s) return null; try { const m = JSON.parse(s); return m && { type: m.type, mimetype: m.mimetype, fileName: m.fileName, fileLength: m.fileLength, width: m.width, height: m.height, seconds: m.seconds, thumb: m.thumb || null, local: !!m.local }; } catch (_) { return null; } }
@@ -303,10 +345,10 @@ function upsertMessage(accountId, m) {
   }
   const id = uuidv4();
   ensureChat(accountId, m.chatJid, m.isGroup);
-  db.prepare(`INSERT INTO chat_messages (id, account_id, chat_jid, msg_id, from_me, sender_jid, sender_name, kind, text, status, timestamp, quoted_id, quoted_text, original_text, forwarded, media)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
+  db.prepare(`INSERT INTO chat_messages (id, account_id, chat_jid, msg_id, from_me, sender_jid, sender_name, kind, text, status, timestamp, quoted_id, quoted_text, original_text, forwarded, media, bot_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(
     id, accountId, m.chatJid, m.id, m.fromMe ? 1 : 0, m.senderJid || null, m.senderName || null, m.kind || 'text', m.text || '', m.status || 0, m.timestamp || now(),
-    m.quoted?.id || null, m.quoted?.text || null, m.originalText || null, m.forwarded ? 1 : 0, m.media ? JSON.stringify(m.media) : null);
+    m.quoted?.id || null, m.quoted?.text || null, m.originalText || null, m.forwarded ? 1 : 0, m.media ? JSON.stringify(m.media) : null, m.botId || null);
   // keep the chat's preview current
   db.prepare(`UPDATE chat_chats SET last_message_at = ?, last_message_text = ?, last_message_from_me = ?
     WHERE account_id = ? AND jid = ? AND COALESCE(last_message_at, 0) <= ?`).run(m.timestamp || now(), previewText(m), m.fromMe ? 1 : 0, accountId, m.chatJid, m.timestamp || now());
@@ -364,6 +406,8 @@ const DEFAULT_SETTINGS = {
   sttProvider: null,
   // Telegram API credentials (https://my.telegram.org) — env TELEGRAM_API_ID/HASH is the fallback
   telegramApiId: null, telegramApiHash: null,
+  // AI chat bots: master switch (each bot has its own enabled flag too)
+  botsEnabled: true,
 };
 function getSettings(userId) {
   const r = db.prepare('SELECT data FROM chat_user_settings WHERE user_id = ?').get(userId);
@@ -398,6 +442,70 @@ function addSticker(userId, name) { const id = uuidv4(); db.prepare('INSERT INTO
 function getSticker(userId, id) { return db.prepare('SELECT id, name FROM chat_stickers WHERE id = ? AND user_id = ?').get(id, userId); }
 function deleteSticker(userId, id) { return db.prepare('DELETE FROM chat_stickers WHERE id = ? AND user_id = ?').run(id, userId); }
 
+// ── AI chat bots ─────────────────────────────────────────────────────────────
+function shapeBot(r) {
+  if (!r) return null;
+  let data = {}; try { data = JSON.parse(r.data || '{}'); } catch (_) {}
+  return { id: r.id, user_id: r.user_id, name: r.name, enabled: !!r.enabled, priority: r.priority || 0, created_at: r.created_at, updated_at: r.updated_at, ...data };
+}
+function listBots(userId) { return db.prepare('SELECT * FROM chat_bots WHERE user_id = ? ORDER BY priority DESC, created_at ASC').all(userId).map(shapeBot); }
+function getBot(id) { return shapeBot(db.prepare('SELECT * FROM chat_bots WHERE id = ?').get(id)); }
+function getUserBot(userId, id) { return shapeBot(db.prepare('SELECT * FROM chat_bots WHERE id = ? AND user_id = ?').get(id, userId)); }
+function saveBot(userId, bot) {
+  const { id, user_id, name, enabled, priority, created_at, updated_at, ...data } = bot;
+  const t = now();
+  if (id && db.prepare('SELECT 1 FROM chat_bots WHERE id = ? AND user_id = ?').get(id, userId)) {
+    db.prepare('UPDATE chat_bots SET name = ?, enabled = ?, priority = ?, data = ?, updated_at = ? WHERE id = ?').run(String(name || 'Bot').slice(0, 80), enabled === false ? 0 : 1, Number(priority) || 0, JSON.stringify(data), t, id);
+    return getBot(id);
+  }
+  const nid = id || uuidv4();
+  db.prepare('INSERT INTO chat_bots (id, user_id, name, enabled, priority, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)').run(nid, userId, String(name || 'Bot').slice(0, 80), enabled === false ? 0 : 1, Number(priority) || 0, JSON.stringify(data), t, t);
+  return getBot(nid);
+}
+function deleteBot(userId, id) {
+  const r = db.prepare('DELETE FROM chat_bots WHERE id = ? AND user_id = ?').run(id, userId);
+  db.prepare("UPDATE chat_chats SET bot_mode = NULL WHERE bot_mode = ?").run(id);
+  return r.changes > 0;
+}
+function logBot(e) {
+  const id = uuidv4();
+  db.prepare(`INSERT INTO chat_bot_log (id, user_id, bot_id, account_id, chat_jid, message_id, in_text, out_text, lang, provider, model, latency_ms, error, event, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, e.userId, e.botId, e.accountId, e.chatJid, e.messageId || null, (e.inText || '').slice(0, 2000), (e.outText || '').slice(0, 4000), e.lang || null, e.provider || null, e.model || null, e.latencyMs || null, e.error || null, e.event || 'reply', now());
+  return id;
+}
+function botLog(userId, { botId, accountId, chatJid, limit = 100 } = {}) {
+  const w = ['user_id = ?'], v = [userId];
+  if (botId) { w.push('bot_id = ?'); v.push(botId); }
+  if (accountId) { w.push('account_id = ?'); v.push(accountId); }
+  if (chatJid) { w.push('chat_jid = ?'); v.push(chatJid); }
+  return db.prepare(`SELECT * FROM chat_bot_log WHERE ${w.join(' AND ')} ORDER BY created_at DESC LIMIT ?`).all(...v, limit);
+}
+function botStats(userId) {
+  const day = now() - 86400000, week = now() - 7 * 86400000;
+  const rows = db.prepare(`SELECT bot_id,
+      SUM(CASE WHEN event = 'reply' AND error IS NULL AND created_at > ? THEN 1 ELSE 0 END) AS today,
+      SUM(CASE WHEN event = 'reply' AND error IS NULL AND created_at > ? THEN 1 ELSE 0 END) AS week,
+      SUM(CASE WHEN error IS NOT NULL AND created_at > ? THEN 1 ELSE 0 END) AS errors,
+      SUM(CASE WHEN event = 'handoff' AND created_at > ? THEN 1 ELSE 0 END) AS handoffs,
+      COUNT(DISTINCT CASE WHEN created_at > ? THEN account_id || '|' || chat_jid END) AS chats,
+      MAX(created_at) AS last_at
+    FROM chat_bot_log WHERE user_id = ? GROUP BY bot_id`).all(day, week, week, week, week, userId);
+  const out = {}; for (const r of rows) out[r.bot_id] = r; return out;
+}
+function botRepliesInChat(botId, accountId, chatJid, since) {
+  return db.prepare(`SELECT COUNT(*) AS n FROM chat_bot_log WHERE bot_id = ? AND account_id = ? AND chat_jid = ? AND event = 'reply' AND error IS NULL AND created_at > ?`).get(botId, accountId, chatJid, since || 0).n;
+}
+// When did a person (not a bot) last write in this chat from our side?
+function lastHumanOutgoingAt(accountId, chatJid) {
+  return db.prepare('SELECT timestamp FROM chat_messages WHERE account_id = ? AND chat_jid = ? AND from_me = 1 AND bot_id IS NULL ORDER BY timestamp DESC LIMIT 1').get(accountId, chatJid)?.timestamp || null;
+}
+function countIncoming(accountId, chatJid) {
+  return db.prepare('SELECT COUNT(*) AS n FROM chat_messages WHERE account_id = ? AND chat_jid = ? AND from_me = 0').get(accountId, chatJid).n;
+}
+function chatsHandledByBot(userId) {
+  return db.prepare(`SELECT c.account_id, c.jid, c.bot_last_id FROM chat_chats c JOIN chat_accounts a ON a.id = c.account_id WHERE a.user_id = ? AND c.bot_last_id IS NOT NULL`).all(userId);
+}
+
 function transaction(fn) {
   db.exec('BEGIN');
   try { const r = fn(); db.exec('COMMIT'); return r; }
@@ -410,4 +518,5 @@ module.exports = {
   upsertMessage, updateMessage, setTranslation, getMessage, getMessageByMsgId, listMessages, untranslatedIncoming, unreadIncomingIds, markOutgoingRead, mediaRaw, setMediaLocal,
   getSettings, setSettings, getQuickAnswers, setQuickAnswers, DEFAULT_SETTINGS, transaction,
   listStickers, addSticker, getSticker, deleteSticker, mergeLidChat, cleanupLidChats, canonJid,
+  listBots, getBot, getUserBot, saveBot, deleteBot, logBot, botLog, botStats, botRepliesInChat, lastHumanOutgoingAt, countIncoming, chatsHandledByBot,
 };
