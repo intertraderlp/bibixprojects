@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="bibix-video" content="" />
+<meta name="robots" content="noindex" />
+<title>VideoVue</title>
+<style>
+  :root { --bg:#0f1117; --card:#171a23; --line:#262a36; --text:#e8eaf0; --muted:#8b91a3; --red:#e2445c; }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif; background:var(--bg); color:var(--text); }
+  header { display:flex; align-items:center; gap:12px; padding:12px 20px; border-bottom:1px solid var(--line); background:var(--card); }
+  .logo { width:32px; height:32px; border-radius:8px; background:var(--red); color:#fff; display:grid; place-items:center; font-weight:700; }
+  .title { font-weight:600; }
+  main { max-width:1000px; margin:20px auto; padding:0 16px; }
+  .stage { position:relative; background:#000; border-radius:12px; overflow:hidden; aspect-ratio:16/9; display:grid; place-items:center; }
+  video { width:100%; height:100%; display:block; background:#000; }
+  .overlay { position:absolute; inset:0; display:grid; place-items:center; background:rgba(15,17,23,.92); padding:24px; text-align:center; }
+  .box { max-width:460px; }
+  .box h2 { margin:0 0 8px; font-size:20px; }
+  .box p { color:var(--muted); margin:0 0 16px; line-height:1.5; }
+  .btn { display:inline-block; padding:10px 16px; border-radius:8px; background:var(--red); color:#fff; text-decoration:none; font-weight:600; }
+  .btn.secondary { background:transparent; border:1px solid var(--line); color:var(--text); margin-left:8px; }
+  .spinner { width:28px; height:28px; border:3px solid var(--line); border-top-color:var(--red); border-radius:50%; animation:spin 1s linear infinite; margin:0 auto 14px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  h1 { font-size:20px; margin:16px 0 6px; }
+  .muted { color:var(--muted); font-size:14px; line-height:1.5; }
+  .error { color:#ff6b81; font-size:14px; margin-top:10px; }
+  .hidden { display:none !important; }
+  .thumb { position:absolute; inset:0; background:center/cover no-repeat; opacity:.35; }
+</style>
+</head>
+<body>
+<header><span class="logo">▶</span><div class="title">VideoVue</div></header>
+<main>
+  <div class="stage">
+    <div id="thumb" class="thumb"></div>
+    <video id="video" controls controlsList="nodownload" disablePictureInPicture playsinline class="hidden"></video>
+    <div id="overlay" class="overlay">
+      <div class="box" id="checking"><div class="spinner"></div><p>Checking for the VideoVue extension…</p></div>
+      <div class="box hidden" id="install">
+        <h2>This video needs the VideoVue extension</h2>
+        <p>Install the free VideoVue browser extension in Chrome, then open this link again. The video plays right here, no account needed.</p>
+        <a class="btn" id="installLink" href="#" target="_blank" rel="noopener">Get the extension</a>
+        <a class="btn secondary" href="#" id="retry">I installed it</a>
+      </div>
+      <div class="box hidden" id="fail"><h2 id="failTitle">Can’t play this video</h2><p id="failMsg"></p></div>
+    </div>
+  </div>
+  <h1 id="vTitle"></h1>
+  <div id="vDesc" class="muted"></div>
+  <div id="err" class="error"></div>
+</main>
+<script src="/watch-assets/hls.min.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const share = location.pathname.split('/').filter(Boolean).pop() || '';
+  document.querySelector('meta[name="bibix-video"]').content = share;
+  const INSTALL_URL = (window.VIDEOVUE_INSTALL_URL || '/watch-assets/install.html');
+  $('installLink').href = INSTALL_URL;
+
+  let hls = null, playToken = null, refreshTimer = null, gotExtension = false, pendingAsk = null;
+
+  function showBox(id) { for (const b of ['checking', 'install', 'fail']) $(b).classList.toggle('hidden', b !== id); $('overlay').classList.remove('hidden'); }
+  function fail(title, msg) { $('failTitle').textContent = title; $('failMsg').textContent = msg || ''; showBox('fail'); }
+
+  // ── Metadata (public) ───────────────────────────────────────────────────────
+  fetch(`/api/videos/watch/${share}`).then(async r => {
+    const d = await r.json().catch(() => ({}));
+    if (!r.ok) { fail('This link is not valid', d.error || 'Ask the person who sent it for a new link.'); return; }
+    document.title = d.title + ' · VideoVue';
+    $('vTitle').textContent = d.title;
+    $('vDesc').textContent = d.description || '';
+    $('thumb').style.backgroundImage = `url(/api/videos/watch/${share}/thumb.jpg)`;
+    if (d.status !== 'ready') fail('Not ready yet', d.status === 'processing' ? 'This video is still being processed. Try again in a few minutes.' : 'This video failed to process.');
+  }).catch(() => fail('Cannot reach the server'));
+
+  // ── Talk to the extension's content script via window.postMessage ─────────
+  // Page → extension: { type:'videovue:request', share, refresh }
+  // Extension → page:  { type:'videovue:ready' } | { type:'videovue:token', token, playlist, expiresIn } | { type:'videovue:error', error, code }
+  function askExtension(refresh) {
+    return new Promise((resolve, reject) => {
+      pendingAsk = { resolve, reject };
+      window.postMessage({ type: 'videovue:request', share, refresh: !!refresh }, location.origin);
+      setTimeout(() => { if (pendingAsk && pendingAsk.resolve === resolve) { pendingAsk = null; reject(new Error('NO_EXTENSION')); } }, refresh ? 10000 : 2500);
+    });
+  }
+  window.addEventListener('message', (e) => {
+    if (e.source !== window || !e.data || typeof e.data.type !== 'string') return;
+    if (e.data.type === 'videovue:ready') { gotExtension = true; return; }
+    // Our own 'videovue:request' also lands here; only a reply settles the pending ask.
+    if (e.data.type !== 'videovue:token' && e.data.type !== 'videovue:error') return;
+    if (!pendingAsk) return;
+    const p = pendingAsk; pendingAsk = null;
+    if (e.data.type === 'videovue:token') p.resolve(e.data);
+    else p.reject(Object.assign(new Error(e.data.error || 'Error'), { code: e.data.code }));
+  });
+
+  async function start() {
+    showBox('checking');
+    let info;
+    try { info = await askExtension(false); }
+    catch (e) {
+      if (e.message === 'NO_EXTENSION') return showBox('install');
+      if (e.code === 'EXTENSION_NOT_ALLOWED') return fail('Extension not allowed', 'This copy of the extension is not allowed by the server. Install the official VideoVue extension.');
+      return fail('Can’t play this video', e.message);
+    }
+    playToken = info.token;
+    play(info);
+  }
+
+  function play(info) {
+    const video = $('video');
+    if (!window.Hls || !Hls.isSupported()) return fail('Unsupported browser', 'This browser cannot play the stream.');
+    if (hls) { try { hls.destroy(); } catch {} }
+    hls = new Hls({ xhrSetup: (xhr) => { xhr.setRequestHeader('Authorization', 'Bearer ' + playToken); } });
+    hls.on(Hls.Events.ERROR, async (_, data) => {
+      if (data.response && data.response.code === 401) {
+        try { const t = await askExtension(true); playToken = t.token; hls.startLoad(); return; } catch (e) { $('err').textContent = e.message; }
+      }
+      if (data.fatal) {
+        if (data.type === Hls.ErrorTypes.NETWORK_ERROR) { $('err').textContent = 'Network error, retrying…'; hls.startLoad(); }
+        else if (data.type === Hls.ErrorTypes.MEDIA_ERROR) hls.recoverMediaError();
+        else $('err').textContent = 'Playback failed: ' + (data.details || data.type);
+      }
+    });
+    hls.on(Hls.Events.MANIFEST_PARSED, () => { $('overlay').classList.add('hidden'); $('thumb').classList.add('hidden'); video.classList.remove('hidden'); video.play().catch(() => {}); });
+    hls.loadSource(info.playlist);
+    hls.attachMedia(video);
+    clearInterval(refreshTimer);
+    refreshTimer = setInterval(async () => { try { const t = await askExtension(true); playToken = t.token; } catch {} }, Math.max(60, Math.floor((info.expiresIn || 900) * 0.6)) * 1000);
+  }
+
+  $('retry').addEventListener('click', (e) => { e.preventDefault(); start(); });
+  document.addEventListener('contextmenu', e => { if (e.target.closest('.stage')) e.preventDefault(); });
+  // Give the content script a moment to load, then ask.
+  setTimeout(start, 300);
+})();
+</script>
+</body>
+</html>

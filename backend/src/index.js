@@ -33,6 +33,7 @@ app.use('/api/outreach',   extensionCors);
 app.use('/api/scraper',    extensionCors);
 app.use('/api/workspaces', extensionCors); // browser scraper extension lists workspaces
 app.use('/api/boards',     extensionCors); // browser scraper extension lists boards
+app.use('/api/videos',     extensionCors); // VideoVue extension fetches play tokens
 
 app.use(express.json({ limit: '20mb' }));
 
@@ -73,6 +74,7 @@ app.use('/api/contacts',       require('./routes/contacts'));
 app.use('/api/outreach',       require('./routes/outreach'));
 app.use('/api/ai',             require('./routes/ai'));
 app.use('/api/scraper',        require('./routes/scraper'));
+app.use('/api/videos',         require('./routes/videos'));
 const chatsRouter = require('./routes/chats');
 app.use('/api/chats',          chatsRouter);
 try { chatsRouter.boot(); } catch (e) { console.warn('[chats] boot failed:', e.message); }
@@ -93,7 +95,7 @@ if (tgBot.enabled && process.env.TELEGRAM_WEBHOOK_URL && process.env.TELEGRAM_BO
 const fetch = require('node-fetch');
 const SETUP_SECRET = process.env.SETUP_SECRET || 'bibix-setup-2026';
 
-app.get('/api/health', (req, res) => res.json({ status: 'ok', pid: process.pid, v: 5 }));
+app.get('/api/health', (req, res) => res.json({ status: 'ok', pid: process.pid, v: 6 }));
 
 app.get('/api/ping', (req, res) => res.json({ ok: true, pid: process.pid }));
 
@@ -178,6 +180,14 @@ app.get('/app', (req, res) => res.redirect('/app/'));
 const CHATS_DIR = path.join(__dirname, '../../chats');
 // /chats/ (trailing slash) is the standalone PWA; bare /chats falls through to the SPA, which embeds it in the app shell.
 app.use('/chats', express.static(CHATS_DIR, { redirect: false, setHeaders: (res, p) => { if (/\/(index\.html|sw\.js|app\.js|manifest\.json)$/.test(p)) res.setHeader('Cache-Control', 'no-cache'); } }));
+
+// ── VideoVue: public watch page for protected videos (plays only with the extension) ──
+const VIDEOS_WATCH_DIR = path.join(__dirname, '../../videos-watch');
+app.use('/watch-assets', express.static(VIDEOS_WATCH_DIR, { maxAge: '1d' }));
+app.get('/watch/:share', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(VIDEOS_WATCH_DIR, 'index.html'));
+});
 
 // ── Serve built React frontend in production ──────────────────────────────────
 const FRONTEND_DIST = path.join(__dirname, '../public');

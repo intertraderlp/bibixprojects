@@ -1,0 +1,21 @@
+{
+  "manifest_version": 3,
+  "name": "VideoVue",
+  "version": "0.2.0",
+  "description": "Watch protected VideoVue videos you were given a link to. No account needed; videos only play while this extension is installed.",
+  "permissions": ["storage"],
+  "host_permissions": ["http://localhost:3001/*", "https://*/*"],
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_icon": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png" }
+  },
+  "icons": { "16": "icons/icon16.png", "32": "icons/icon32.png", "48": "icons/icon48.png", "128": "icons/icon128.png" },
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["http://localhost:3001/watch/*", "https://*/watch/*"],
+      "js": ["content/content.js"],
+      "run_at": "document_start"
+    }
+  ]
+}

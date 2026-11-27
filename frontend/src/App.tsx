@@ -24,6 +24,7 @@ import InstagramPage from './pages/InstagramPage';
 import LinkedInPage from './pages/LinkedInPage';
 import BackupsPage from './pages/BackupsPage';
 import ExtensionsPage from './pages/ExtensionsPage';
+import VideoVuePage from './pages/VideoVuePage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuthStore();
@@ -75,6 +76,7 @@ export default function App() {
         <Route path="extensions" element={<ModuleRoute module="extensions"><ExtensionsPage /></ModuleRoute>} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="admin" element={<AdminPage />} />
+        <Route path="videovue" element={<VideoVuePage />} />
       </Route>
     </Routes>
   );
