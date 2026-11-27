@@ -8,6 +8,9 @@ import CheckboxCell from './CheckboxCell';
 import TagsCell from './TagsCell';
 import LinkCell from './LinkCell';
 import AttachmentsCell from './AttachmentsCell';
+import FormulaCell from './FormulaCell';
+import TimeTrackingCell from './TimeTrackingCell';
+import LastUpdatedCell from './LastUpdatedCell';
 
 interface Props {
   column: Column;
@@ -40,6 +43,12 @@ export default function CellRenderer({ column, value, onChange, workspaceId, ite
       return <LinkCell value={value} onChange={onChange} />;
     case 'attachments':
       return itemId ? <AttachmentsCell itemId={itemId} /> : null;
+    case 'formula':
+      return <FormulaCell itemId={itemId} formula={(column.settings as { formula?: string })?.formula} />;
+    case 'time_tracking':
+      return <TimeTrackingCell value={value} onChange={onChange} />;
+    case 'last_updated':
+      return <LastUpdatedCell itemId={itemId} workspaceId={workspaceId} />;
     default:
       return <TextCell value={value} onChange={onChange} />;
   }

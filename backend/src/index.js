@@ -25,11 +25,16 @@ const extensionCors = cors({
   },
   credentials: false,
 });
-app.use('/api/auth',      extensionCors);
-app.use('/api/instagram', extensionCors);
-app.use('/api/linkedin',  extensionCors);
-app.use('/api/tiktok',    extensionCors);
-app.use('/api/contacts',  extensionCors);
+app.use('/api/auth',       extensionCors);
+app.use('/api/instagram',  extensionCors);
+app.use('/api/linkedin',   extensionCors);
+app.use('/api/tiktok',     extensionCors);
+app.use('/api/contacts',   extensionCors);
+app.use('/api/outreach',   extensionCors);
+app.use('/api/scraper',    extensionCors);
+app.use('/api/workspaces', extensionCors); // browser scraper extension lists workspaces
+app.use('/api/boards',     extensionCors); // browser scraper extension lists boards
+app.use('/api/videos',     extensionCors); // VideoVue extension fetches play tokens
 
 app.use(express.json({ limit: '20mb' }));
 
@@ -44,8 +49,10 @@ app.use('/api/groups', require('./routes/groups'));
 app.use('/api/items', require('./routes/items'));
 app.use('/api/updates', require('./routes/updates'));
 app.use('/api/notifications', require('./routes/notifications'));
+app.use('/api/reminders', require('./routes/reminders'));
 app.use('/api/push', require('./routes/push'));
 app.use('/api/automations', require('./routes/automations'));
+app.use('/api/templates', require('./routes/templates'));
 app.use('/api/search', require('./routes/search'));
 
 const attachmentsRouter = require('./routes/attachments');
@@ -59,12 +66,20 @@ app.use('/api/events',      require('./routes/events'));
 app.use('/api/scheduling',  require('./routes/scheduling'));
 app.use('/api/crm',         require('./routes/crm'));
 app.use('/api/invoices',    require('./routes/invoices'));
+app.use('/api/agreements',  require('./routes/agreements'));
+app.use('/api/extensions',  require('./routes/extensions'));
 const instagramRouter = require('./routes/instagram');
 app.use('/api/instagram',      instagramRouter);
 app.use('/api/linkedin',       require('./routes/linkedin'));
 app.use('/api/tiktok',         require('./routes/tiktok'));
 app.use('/api/contacts',       require('./routes/contacts'));
+app.use('/api/outreach',       require('./routes/outreach'));
 app.use('/api/ai',             require('./routes/ai'));
+app.use('/api/scraper',        require('./routes/scraper'));
+app.use('/api/videos',         require('./routes/videos'));
+const chatsRouter = require('./routes/chats');
+app.use('/api/chats',          chatsRouter);
+try { chatsRouter.boot(); } catch (e) { console.warn('[chats] boot failed:', e.message); }
 
 // Start Telegram bot (only if TELEGRAM_BOT_TOKEN is set)
 const tgBot = require('./bot/telegram');
@@ -162,6 +177,19 @@ app.use((err, req, res, _next) => {
 const PWA_DIR = path.join(__dirname, '../../pwa');
 app.use('/app', express.static(PWA_DIR));
 app.get('/app', (req, res) => res.redirect('/app/'));
+
+// ── Serve the Chats PWA (WhatsApp linked device + AI translation) ─────────────
+const CHATS_DIR = path.join(__dirname, '../../chats');
+// /chats/ (trailing slash) is the standalone PWA; bare /chats falls through to the SPA, which embeds it in the app shell.
+app.use('/chats', express.static(CHATS_DIR, { redirect: false, setHeaders: (res, p) => { if (/\/(index\.html|sw\.js|app\.js|manifest\.json)$/.test(p)) res.setHeader('Cache-Control', 'no-cache'); } }));
+
+// ── VideoVue: public watch page for protected videos (plays only with the extension) ──
+const VIDEOS_WATCH_DIR = path.join(__dirname, '../../videos-watch');
+app.use('/watch-assets', express.static(VIDEOS_WATCH_DIR, { maxAge: '1d' }));
+app.get('/watch/:share', (req, res) => {
+  res.setHeader('Cache-Control', 'no-cache');
+  res.sendFile(path.join(VIDEOS_WATCH_DIR, 'index.html'));
+});
 
 // ── Serve built React frontend in production ──────────────────────────────────
 const FRONTEND_DIST = path.join(__dirname, '../public');

@@ -18,11 +18,15 @@ import SchedulingPage from './pages/SchedulingPage';
 import CRMPage from './pages/CRMPage';
 import InvoicePage from './pages/InvoicePage';
 import PublicFormPage from './pages/PublicFormPage';
+import ChatsPage from './pages/ChatsPage';
+import AvailabilityPage from './pages/AvailabilityPage';
 import InstagramPage from './pages/InstagramPage';
 import LinkedInPage from './pages/LinkedInPage';
 import TikTokPage from './pages/TikTokPage';
 import BackupsPage from './pages/BackupsPage';
 import MobileBatches from './pages/MobileBatches';
+import ExtensionsPage from './pages/ExtensionsPage';
+import VideoVuePage from './pages/VideoVuePage';
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuthStore();
@@ -53,6 +57,7 @@ export default function App() {
     <Routes>
       <Route path="/schedule/:userId" element={<BookingPage />} />
       <Route path="/form/:formId" element={<PublicFormPage />} />
+      <Route path="/availability/:token" element={<AvailabilityPage />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Navigate to="/login" replace />} />
       {/* Mobile PWA routes — outside <Layout> so no desktop sidebar/header */}
@@ -68,13 +73,16 @@ export default function App() {
         <Route path="scheduling" element={<ModuleRoute module="scheduling"><SchedulingPage /></ModuleRoute>} />
         <Route path="crm" element={<ModuleRoute module="crm"><CRMPage /></ModuleRoute>} />
         <Route path="invoices" element={<InvoicePage />} />
+        <Route path="chats" element={<ModuleRoute module="chats"><ChatsPage /></ModuleRoute>} />
         <Route path="instagram" element={<Navigate to="/marketing/instagram" replace />} />
         <Route path="marketing/instagram" element={<ModuleRoute module="instagram"><InstagramPage /></ModuleRoute>} />
         <Route path="marketing/linkedin"  element={<ModuleRoute module="linkedin"><LinkedInPage /></ModuleRoute>} />
         <Route path="marketing/tiktok"    element={<ModuleRoute module="tiktok"><TikTokPage /></ModuleRoute>} />
         <Route path="backups" element={<BackupsPage />} />
+        <Route path="extensions" element={<ModuleRoute module="extensions"><ExtensionsPage /></ModuleRoute>} />
         <Route path="settings" element={<SettingsPage />} />
         <Route path="admin" element={<AdminPage />} />
+        <Route path="videovue" element={<VideoVuePage />} />
       </Route>
     </Routes>
   );

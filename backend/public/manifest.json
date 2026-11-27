@@ -8,6 +8,9 @@
   "background_color": "#f9fafb",
   "theme_color": "#0073ea",
   "orientation": "portrait",
+  "shortcuts": [
+    { "name": "Chats", "short_name": "Chats", "description": "WhatsApp & Telegram with AI translation", "url": "/chats", "icons": [{ "src": "/chats/icon-192.png", "sizes": "192x192" }] }
+  ],
   "icons": [
     { "src": "/bibix-logo.png", "sizes": "192x192", "type": "image/png", "purpose": "any maskable" },
     { "src": "/bibix-logo.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }

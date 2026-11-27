@@ -1,6 +1,26 @@
 import { create } from 'zustand';
 import api from '../api/client';
-import type { BoardData, Column, Group, Item, ItemValue, ColumnType } from '../types';
+import { useAuthStore } from './authStore';
+import type { BoardData, Column, Group, Item, ItemValue, ColumnType, MessageTemplate } from '../types';
+
+// ── Value lookup caches ───────────────────────────────────────────────────────
+// getValue/getItemValues are called once PER CELL during render. A linear scan of
+// the values array (O(N)) made board render O(N^2) — minutes of freeze at 560 rows.
+// Build O(1)/O(1)-amortised maps once, rebuilt only when the values array changes.
+let _valuesRef: ItemValue[] | null = null;
+let _valueMap = new Map<string, string | null>();
+let _itemValuesMap = new Map<string, ItemValue[]>();
+function _ensureMaps(vals: ItemValue[]) {
+  if (vals === _valuesRef) return;
+  _valuesRef = vals;
+  _valueMap = new Map();
+  _itemValuesMap = new Map();
+  for (const v of vals) {
+    _valueMap.set(v.item_id + '\u0000' + v.column_id, v.value);
+    const arr = _itemValuesMap.get(v.item_id);
+    if (arr) arr.push(v); else _itemValuesMap.set(v.item_id, [v]);
+  }
+}
 
 interface BoardState {
   board: BoardData | null;
@@ -19,18 +39,36 @@ interface BoardState {
   addGroup: (name: string, color?: string) => Promise<void>;
   updateGroup: (groupId: string, data: Partial<Group>) => Promise<void>;
   deleteGroup: (groupId: string) => Promise<void>;
-  addColumn: (name: string, type: ColumnType) => Promise<void>;
+  addColumn: (name: string, type: ColumnType, settings?: Record<string, unknown>) => Promise<void>;
   updateColumn: (columnId: string, data: Partial<Column>) => Promise<void>;
   deleteColumn: (columnId: string) => Promise<void>;
-  updateBoard: (data: { name?: string; description?: string; icon?: string }) => Promise<void>;
+  updateBoard: (data: { name?: string; description?: string; icon?: string; name_col_width?: number; name_col_label?: string }) => Promise<void>;
   getItemValues: (itemId: string) => ItemValue[];
   getValue: (itemId: string, columnId: string) => string | null;
+  templates: MessageTemplate[];
+  loadTemplates: (boardId: string) => Promise<void>;
+  runTemplate: (templateId: string, itemId: string) => Promise<{ column_name: string }>;
 }
 
 export const useBoardStore = create<BoardState>((set, get) => ({
   board: null,
   loading: false,
   error: null,
+  templates: [],
+
+  loadTemplates: async (boardId) => {
+    try {
+      const { data } = await api.get('/templates', { params: { board_id: boardId } });
+      set({ templates: data });
+    } catch { set({ templates: [] }); }
+  },
+
+  runTemplate: async (templateId, itemId) => {
+    const { data } = await api.post(`/templates/${templateId}/run`, { item_id: itemId });
+    const boardId = get().board?.id;
+    if (boardId) await get().refreshBoard(boardId);
+    return data;
+  },
 
   loadBoard: async (id) => {
     set({ loading: true, error: null });
@@ -51,15 +89,37 @@ export const useBoardStore = create<BoardState>((set, get) => ({
   },
 
   updateItemValue: async (itemId, columnId, value) => {
-    const { data } = await api.put(`/items/${itemId}/values`, { column_id: columnId, value });
+    // Optimistic: flip the value in local state immediately so the UI reflects the
+    // change instantly, then persist in the background. Revert if the save fails.
+    const prevValues = get().board?.values;
+    const prevItems = get().board?.items;
+    const nowIso = new Date().toISOString();
+    const meId = useAuthStore.getState().user?.id || null;
     set(state => {
       if (!state.board) return state;
       const existing = state.board.values.findIndex(v => v.item_id === itemId && v.column_id === columnId);
       const newValues = [...state.board.values];
-      if (existing >= 0) newValues[existing] = data;
-      else newValues.push(data);
-      return { board: { ...state.board, values: newValues } };
+      if (existing >= 0) newValues[existing] = { ...newValues[existing], value };
+      else newValues.push({ id: `tmp-${itemId}-${columnId}`, item_id: itemId, column_id: columnId, value } as typeof newValues[number]);
+      // Bump the item's last-modified stamp so a "Last updated" column reacts live.
+      const newItems = state.board.items.map(it => it.id === itemId ? { ...it, updated_at: nowIso, updated_by: meId } : it);
+      return { board: { ...state.board, values: newValues, items: newItems } };
     });
+    try {
+      const { data } = await api.put(`/items/${itemId}/values`, { column_id: columnId, value });
+      // Reconcile with the server row (real id / updated_at).
+      set(state => {
+        if (!state.board) return state;
+        const existing = state.board.values.findIndex(v => v.item_id === itemId && v.column_id === columnId);
+        const newValues = [...state.board.values];
+        if (existing >= 0) newValues[existing] = data;
+        else newValues.push(data);
+        return { board: { ...state.board, values: newValues } };
+      });
+    } catch (e) {
+      if (prevValues) set(state => state.board ? { board: { ...state.board, values: prevValues, items: prevItems || state.board.items } } : state);
+      throw e;
+    }
   },
 
   addItem: async (groupId, name, parentItemId) => {
@@ -171,9 +231,9 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     });
   },
 
-  addColumn: async (name, type) => {
+  addColumn: async (name, type, settings) => {
     if (!get().board) return;
-    const { data } = await api.post('/columns', { board_id: get().board!.id, name, type });
+    const { data } = await api.post('/columns', { board_id: get().board!.id, name, type, ...(settings ? { settings } : {}) });
     set(state => {
       if (!state.board) return state;
       return { board: { ...state.board, columns: [...state.board.columns, data] } };
@@ -208,7 +268,17 @@ export const useBoardStore = create<BoardState>((set, get) => ({
     set(state => state.board ? { board: { ...state.board, ...data } } : state);
   },
 
-  getItemValues: (itemId) => get().board?.values.filter(v => v.item_id === itemId) ?? [],
+  getItemValues: (itemId) => {
+    const vals = get().board?.values;
+    if (!vals) return [];
+    _ensureMaps(vals);
+    return _itemValuesMap.get(itemId) ?? [];
+  },
 
-  getValue: (itemId, columnId) => get().board?.values.find(v => v.item_id === itemId && v.column_id === columnId)?.value ?? null,
+  getValue: (itemId, columnId) => {
+    const vals = get().board?.values;
+    if (!vals) return null;
+    _ensureMaps(vals);
+    return _valueMap.get(itemId + '\u0000' + columnId) ?? null;
+  },
 }));

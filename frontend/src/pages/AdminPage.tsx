@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Plus, Pencil, Trash2, Shield, User, Eye, Settings2, ToggleLeft, ToggleRight, ChevronRight, Crown, Users, Tag, X, Check } from 'lucide-react';
+import { Plus, Pencil, Trash2, Shield, User, Eye, Settings2, ToggleLeft, ToggleRight, ChevronRight, Crown, Users, Tag, X, Check, LogIn } from 'lucide-react';
 import api from '../api/client';
 import { useAuthStore } from '../store/authStore';
+import { enterImpersonation } from '../lib/impersonation';
 import type { User as UserType, UserRole, AppModule, UserGroup } from '../types';
 import Avatar from '../components/ui/Avatar';
 import Modal from '../components/ui/Modal';
@@ -24,12 +25,21 @@ const MODULES: { id: AppModule; label: string; description: string; emoji: strin
   { id: 'crm',        label: 'CRM',                  description: 'Contacts, forms and reports',     emoji: '👥' },
   { id: 'invoices',   label: 'Invoices',             description: 'Create and manage invoices',      emoji: '🧾' },
   { id: 'marketing',  label: 'Marketing',            description: 'Social media and campaigns',      emoji: '📣' },
+  { id: 'extensions', label: 'Extensions Download',   description: 'Download & install browser extensions', emoji: '🧩' },
+  { id: 'chats',      label: 'Chats',                description: 'WhatsApp & Telegram with AI translation (PWA)', emoji: '💬' },
 ];
 
 // Sub-modules nested under "marketing" → toggleable when marketing is on.
 const MARKETING_CHILDREN: { key: string; label: string; description: string; emoji: string }[] = [
   { key: 'marketing.instagram', label: 'Instagram', description: 'Access the Instagram tools',  emoji: '📷' },
   { key: 'marketing.linkedin',  label: 'LinkedIn',  description: 'Access the LinkedIn tools',   emoji: '💼' },
+];
+// Per-extension visibility nested under "extensions" → which downloads a user sees.
+const EXTENSION_CHILDREN: { key: string; label: string; description: string; emoji: string }[] = [
+  { key: 'extensions.linkedin',  label: 'LinkedIn',  description: 'LinkedIn Assistant extension',  emoji: '💼' },
+  { key: 'extensions.instagram', label: 'Instagram', description: 'Instagram Assistant extension', emoji: '📷' },
+  { key: 'extensions.tiktok',    label: 'TikTok',    description: 'TikTok Assistant extension',    emoji: '🎵' },
+  { key: 'extensions.idealista', label: 'Idealista', description: 'Idealista Scraper extension',   emoji: '🏠' },
 ];
 // Tabs nested under "marketing.instagram" → visible in the Chrome extension popup.
 const INSTAGRAM_EXT_TABS: { key: string; label: string; description: string }[] = [
@@ -226,6 +236,41 @@ function PermissionsPanel({ user, canEdit, onClose, onSaved }: {
                                 </p>
                               </div>
                             )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Extensions → per-extension visibility */}
+                  {mod.id === 'extensions' && (isElevated || on) && (
+                    <div className="ml-6 mt-2 pl-3 border-l-2 border-gray-100 space-y-2">
+                      <p className="text-[11px] uppercase tracking-wider text-gray-400 mb-1">Which extensions this user can see</p>
+                      {EXTENSION_CHILDREN.map(child => {
+                        const childOn = getKey(child.key);
+                        const childDisabled = isElevated || !canEdit;
+                        return (
+                          <div key={child.key}
+                            className={`flex items-center gap-3 p-3 rounded-lg border transition-colors ${
+                              childDisabled
+                                ? 'border-gray-100 bg-gray-50 opacity-60 cursor-not-allowed'
+                                : childOn
+                                  ? 'border-blue-200 bg-blue-50/50 cursor-pointer hover:bg-blue-50'
+                                  : 'border-gray-200 bg-white cursor-pointer hover:bg-gray-50'
+                            }`}
+                            onClick={() => !childDisabled && toggleKey(child.key)}
+                          >
+                            <span className="text-lg flex-shrink-0">{child.emoji}</span>
+                            <div className="flex-1 min-w-0">
+                              <div className="text-sm font-medium text-gray-800">{child.label}</div>
+                              <div className="text-xs text-gray-400 mt-0.5">{child.description}</div>
+                            </div>
+                            <div className="flex-shrink-0">
+                              {isElevated || childOn
+                                ? <ToggleRight size={20} className="text-blue-500" />
+                                : <ToggleLeft  size={20} className="text-gray-300" />
+                              }
+                            </div>
                           </div>
                         );
                       })}
@@ -648,6 +693,20 @@ export default function AdminPage() {
     }
   };
 
+  const ROLE_RANK: Record<string, number> = { super_admin: 3, admin: 2, user: 1, readonly: 1 };
+  const canImpersonate = (u: AdminUser) =>
+    !!me && u.id !== me.id && (ROLE_RANK[me.role ?? ''] || 0) > (ROLE_RANK[u.role] || 0);
+
+  const handleImpersonate = async (u: AdminUser) => {
+    if (!confirm(`Sign in as ${u.name}? You'll see the app exactly as they do, and can return to your account anytime from the banner at the top.`)) return;
+    try {
+      const { data } = await api.post(`/admin/users/${u.id}/impersonate`);
+      enterImpersonation(data.token, u.name, me?.name || 'Admin');
+    } catch (e: unknown) {
+      toast.error((e as { response?: { data?: { error?: string } } })?.response?.data?.error || 'Failed to sign in as user');
+    }
+  };
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   if (loading) return (
@@ -710,16 +769,16 @@ export default function AdminPage() {
         {activeTab === 'groups' ? (
           <GroupsTab users={users} onUsersChanged={setUsers} isSuperAdmin={isSuperAdmin} />
         ) : (
-        <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+        <div className="bg-white rounded-xl border border-gray-200 overflow-x-auto">
           <table className="w-full">
             <thead>
               <tr className="border-b border-gray-100 bg-gray-50">
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">User</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Role</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Groups</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Access</th>
-                <th className="text-left px-6 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Joined</th>
-                <th className="px-6 py-3" />
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">User</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider">Role</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider hidden sm:table-cell">Groups</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider hidden lg:table-cell">Access</th>
+                <th className="text-left px-4 py-3 text-xs font-semibold text-gray-500 uppercase tracking-wider hidden md:table-cell">Joined</th>
+                <th className="px-4 py-3" />
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-50">
@@ -729,7 +788,7 @@ export default function AdminPage() {
 
                 return (
                   <tr key={u.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-4">
                       <div className="flex items-center gap-3">
                         <Avatar name={u.name} color={u.avatar_color} size="sm" />
                         <div>
@@ -741,7 +800,7 @@ export default function AdminPage() {
                         </div>
                       </div>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-4">
                       <div className="flex items-center gap-2">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${roleMeta.color}`}>
                           {roleMeta.icon} {roleMeta.label}
@@ -754,7 +813,7 @@ export default function AdminPage() {
                         )}
                       </div>
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-4 hidden sm:table-cell">
                       {u.groups?.length > 0 ? (
                         <div className="flex flex-wrap gap-1">
                           {u.groups.map(g => (
@@ -768,7 +827,7 @@ export default function AdminPage() {
                         <span className="text-xs text-gray-400 italic">No group</span>
                       )}
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-4 hidden lg:table-cell">
                       <button
                         onClick={() => setPermUser(u)}
                         className="flex items-center gap-2 text-sm text-gray-600 hover:text-blue-600 group"
@@ -787,15 +846,21 @@ export default function AdminPage() {
                         <ChevronRight size={13} className="text-gray-300 group-hover:text-blue-500" />
                       </button>
                     </td>
-                    <td className="px-6 py-4 text-sm text-gray-400">
+                    <td className="px-4 py-4 text-sm text-gray-400 hidden md:table-cell">
                       {new Date(u.created_at).toLocaleDateString()}
                     </td>
-                    <td className="px-6 py-4">
+                    <td className="px-4 py-4">
                       <div className="flex items-center gap-1 justify-end">
                         <button onClick={() => setPermUser(u)} title="Manage permissions"
                           className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded">
                           <Settings2 size={15} />
                         </button>
+                        {canImpersonate(u) && (
+                          <button onClick={() => handleImpersonate(u)} title={`Sign in as ${u.name}`}
+                            className="p-1.5 text-gray-400 hover:text-amber-600 hover:bg-amber-50 rounded">
+                            <LogIn size={15} />
+                          </button>
+                        )}
                         {isSuperAdmin && (
                           <>
                             <button onClick={() => openEdit(u)}

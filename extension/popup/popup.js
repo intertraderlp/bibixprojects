@@ -18,7 +18,19 @@ const LENGTH_IDS = ['brief', 'medium', 'long'];
 const $ = (sel) => document.querySelector(sel);
 
 function send(type, payload) {
-  return new Promise((resolve) => chrome.runtime.sendMessage({ type, payload }, resolve));
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage({ type, payload }, (res) => {
+        if (chrome.runtime.lastError) {
+          resolve({ ok: false, error: chrome.runtime.lastError.message || 'Background not responding' });
+          return;
+        }
+        resolve(res || { ok: false, error: 'No response from background (reload the extension)' });
+      });
+    } catch (e) {
+      resolve({ ok: false, error: e.message });
+    }
+  });
 }
 
 function showSaved() {
@@ -158,6 +170,64 @@ chrome.runtime.onMessage.addListener((msg) => {
     prog.className = 'act-progress err';
     $('#act-connect-go').disabled = false;
   }
+});
+
+// ── Outreach tab ──────────────────────────────────────────────────────────
+async function refreshOutreachSummary() {
+  const el = $('#out-summary');
+  if (el) el.textContent = 'Checking your campaigns…';
+  const res = await send('outreachSummary');
+  if (!res.ok) { if (el) el.textContent = res.error || 'Could not load campaigns.'; return; }
+  // The background proxy wraps the JSON body in { ok, data }, and the endpoint
+  // itself returns { ok, data:{…} } — so the real payload is res.data.data.
+  const d = (res.data && res.data.data) ? res.data.data : (res.data || {});
+  const camps = d.campaigns || [];
+  if (el) {
+    el.textContent = d.ready > 0
+      ? `${d.ready} prospect${d.ready === 1 ? '' : 's'} ready to invite across ${camps.length} active campaign${camps.length === 1 ? '' : 's'}.`
+      : (camps.length
+        ? 'No prospects to invite right now (check daily limits, or each prospect has a LinkedIn URL).'
+        : 'No active campaigns. Set a campaign to “Active” in Monday → LinkedIn → Outreach.');
+  }
+  const st = await send('outreachState');
+  setOutreachRunning(st.ok && st.data.running);
+}
+
+function setOutreachRunning(running) {
+  const start = $('#out-start'), stop = $('#out-stop');
+  if (start) { start.disabled = running; start.hidden = running; }
+  if (stop) stop.hidden = !running;
+}
+
+function bindOutreachTab() {
+  $('#out-start').addEventListener('click', async () => {
+    const limit = Math.max(1, Math.min(50, Number($('#out-limit').value) || 15));
+    const prog = $('#out-progress');
+    prog.hidden = false; prog.className = 'act-progress'; prog.textContent = 'Starting…';
+    setOutreachRunning(true);
+    const res = await send('outreachStart', { limit });
+    if (!res.ok) {
+      prog.className = 'act-progress err';
+      prog.textContent = res.error || 'Could not start.';
+      setOutreachRunning(false);
+    }
+  });
+  $('#out-stop').addEventListener('click', async () => {
+    await send('outreachStop');
+    const prog = $('#out-progress');
+    if (prog) { prog.hidden = false; prog.textContent = 'Stopping…'; }
+  });
+}
+
+// Progress from the background runner.
+chrome.runtime.onMessage.addListener((msg) => {
+  if (!msg || msg.type !== 'bibix-outreach-progress') return;
+  const prog = $('#out-progress');
+  if (!prog) return;
+  prog.hidden = false;
+  prog.textContent = msg.text || '';
+  prog.className = 'act-progress' + (msg.error ? ' err' : msg.done ? ' ok' : '');
+  if (msg.done) { setOutreachRunning(false); refreshOutreachSummary(); }
 });
 
 // ── Candidates tab ──────────────────────────────────────────────────────────
@@ -302,6 +372,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   bindCommentTab();
   bindReplyTab();
   bindActionsTab();
+  bindOutreachTab();
   bindCandidatesTab();
   bindAccountTab();
   bindLogin();
@@ -310,6 +381,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     setActiveTab(b.dataset.tab);
     if (b.dataset.tab === 'candidates') loadCandidates();
     if (b.dataset.tab === 'actions') refreshActionsStatus();
+    if (b.dataset.tab === 'outreach') refreshOutreachSummary();
   }));
   setActiveTab('comment');
 

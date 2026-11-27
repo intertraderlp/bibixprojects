@@ -1,8 +1,9 @@
 import { useState } from 'react';
 import { useBoardStore } from '../../store/boardStore';
 import Modal from '../ui/Modal';
+import FormulaEditor from './FormulaEditor';
 import type { ColumnType } from '../../types';
-import { Hash, Type, Calendar, User, CheckSquare, Tag, Link, Star, Paperclip } from 'lucide-react';
+import { Hash, Type, Calendar, User, CheckSquare, Tag, Link, Star, Paperclip, Calculator, Timer, History } from 'lucide-react';
 import toast from 'react-hot-toast';
 
 interface Props { onClose: () => void; }
@@ -18,16 +19,20 @@ const COLUMN_TYPES: { type: ColumnType; label: string; icon: React.ReactNode; de
   { type: 'tags', label: 'Tags', icon: <Tag size={18} />, desc: 'Multi-tag labels' },
   { type: 'link', label: 'Link', icon: <Link size={18} />, desc: 'URL links' },
   { type: 'attachments', label: 'Attachments', icon: <Paperclip size={18} />, desc: 'Files & images' },
+  { type: 'formula', label: 'Formula', icon: <Calculator size={18} />, desc: 'Compute from columns' },
+  { type: 'time_tracking', label: 'Time tracking', icon: <Timer size={18} />, desc: 'Start / stop timer' },
+  { type: 'last_updated', label: 'Last updated', icon: <History size={18} />, desc: 'When & who changed the item' },
 ];
 
 export default function AddColumnModal({ onClose }: Props) {
-  const { addColumn } = useBoardStore();
+  const { addColumn, board } = useBoardStore();
   const [selectedType, setSelectedType] = useState<ColumnType>('text');
   const [name, setName] = useState('');
+  const [formula, setFormula] = useState('');
 
   const handleAdd = async () => {
     const colName = name.trim() || COLUMN_TYPES.find(c => c.type === selectedType)?.label || 'Column';
-    await addColumn(colName, selectedType);
+    await addColumn(colName, selectedType, selectedType === 'formula' ? { formula } : undefined);
     toast.success('Column added');
     onClose();
   };
@@ -55,6 +60,12 @@ export default function AddColumnModal({ onClose }: Props) {
             ))}
           </div>
         </div>
+        {selectedType === 'formula' && (
+          <div>
+            <label className="block text-xs font-medium text-gray-500 mb-1">Formula</label>
+            <FormulaEditor value={formula} onChange={setFormula} columns={board?.columns || []} />
+          </div>
+        )}
         <div className="flex gap-2 justify-end pt-2">
           <button onClick={onClose} className="px-4 py-2 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">Cancel</button>
           <button onClick={handleAdd} className="px-4 py-2 text-sm bg-monday-blue text-white rounded-lg hover:bg-blue-600">Add Column</button>

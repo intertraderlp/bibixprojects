@@ -5,7 +5,7 @@ import {
 } from 'date-fns';
 import {
   ChevronLeft, ChevronRight, Plus, Calendar as CalendarIcon,
-  SlidersHorizontal, Check,
+  SlidersHorizontal, Check, Lock,
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api/client';
@@ -18,6 +18,12 @@ interface GoogleEvent {
   end:   { dateTime?: string; date?: string };
   htmlLink?: string;
   _provider?: string; _accountEmail?: string; _connId?: string;
+  _busy?: boolean; _mine?: boolean; owner_name?: string | null;
+}
+// Raw meeting as returned by /calendar/meetings
+interface MeetingRaw {
+  id: string; title: string; start: string; end: string; all_day: boolean;
+  _mine: boolean; _busy: boolean; owner_name?: string | null;
 }
 interface BoardTask {
   id: string; name: string; board_id: string; board_name: string; board_icon: string;
@@ -25,6 +31,13 @@ interface BoardTask {
 }
 
 const PROVIDER_COLOR: Record<string, string> = { google: '#1a73e8', microsoft: '#0078d4' };
+const BIBIX_OWN_COLOR = '#6c5ce7';     // my Bibix meetings
+const BIBIX_SHARED_COLOR = '#8395a7';  // meetings shared with me
+const colorForEvent = (ev: GoogleEvent): string => {
+  if (ev._connId === 'bibix-own') return BIBIX_OWN_COLOR;
+  if (ev._connId === 'bibix-shared') return BIBIX_SHARED_COLOR;
+  return PROVIDER_COLOR[ev._provider || 'google'] || '#1a73e8';
+};
 const BOARD_PALETTE = [
   '#0073ea', '#00c875', '#e2445c', '#fdab3d', '#a25ddc',
   '#037f4c', '#ff158a', '#0086c0', '#7f5347', '#00b0a7',
@@ -35,6 +48,7 @@ export default function CalendarPage() {
   const [currentDate, setCurrentDate]     = useState(new Date());
   const [connections, setConnections]     = useState<CalConn[]>([]);
   const [allEvents, setAllEvents]         = useState<GoogleEvent[]>([]);
+  const [meetings, setMeetings]           = useState<GoogleEvent[]>([]);
   const [boardTasks, setBoardTasks]       = useState<BoardTask[]>([]);
   const [loading, setLoading]             = useState(false);
   const [showFilter, setShowFilter]       = useState(false);
@@ -61,15 +75,30 @@ export default function CalendarPage() {
       const startStr   = format(rangeStart, 'yyyy-MM-dd');
       const endStr     = format(rangeEnd,   'yyyy-MM-dd');
 
-      const [tasksRes, eventsRes] = await Promise.allSettled([
+      const [tasksRes, eventsRes, meetingsRes] = await Promise.allSettled([
         api.get(`/calendar/board-tasks?start=${startStr}&end=${endStr}`),
         connections.length > 0
           ? api.get(`/calendar/events?start=${rangeStart.toISOString()}&end=${rangeEnd.toISOString()}`)
           : Promise.resolve({ data: [] }),
+        api.get(`/calendar/meetings?start=${rangeStart.toISOString()}&end=${rangeEnd.toISOString()}`),
       ]);
 
       setBoardTasks(tasksRes.status === 'fulfilled' ? tasksRes.value.data : []);
       setAllEvents(eventsRes.status === 'fulfilled' ? eventsRes.value.data : []);
+
+      const rawMeetings: MeetingRaw[] = meetingsRes.status === 'fulfilled' ? meetingsRes.value.data : [];
+      setMeetings(rawMeetings.map(m => ({
+        id: m.id,
+        summary: m.title,
+        start: m.all_day ? { date: (m.start || '').slice(0, 10) } : { dateTime: m.start },
+        end:   m.all_day ? { date: (m.end   || '').slice(0, 10) } : { dateTime: m.end },
+        _provider: 'bibix',
+        _connId: m._mine ? 'bibix-own' : 'bibix-shared',
+        _accountEmail: m.owner_name || 'Me',
+        _busy: m._busy,
+        _mine: m._mine,
+        owner_name: m.owner_name,
+      })));
     } finally { setLoading(false); }
   }, [currentDate, connections]);
 
@@ -118,9 +147,13 @@ export default function CalendarPage() {
     });
   };
 
+  const combinedEvents = useMemo(() => [...allEvents, ...meetings], [allEvents, meetings]);
+  const hasOwnMeetings    = useMemo(() => meetings.some(m => m._connId === 'bibix-own'), [meetings]);
+  const hasSharedMeetings = useMemo(() => meetings.some(m => m._connId === 'bibix-shared'), [meetings]);
+
   const getEventsForDay = (day: Date): GoogleEvent[] => {
     const dayStr = format(day, 'yyyy-MM-dd');
-    return allEvents.filter(ev => {
+    return combinedEvents.filter(ev => {
       if (ev._connId && hiddenSources.has(ev._connId)) return false;
       const d = ev.start.dateTime ? format(parseISO(ev.start.dateTime), 'yyyy-MM-dd') : ev.start.date;
       return d === dayStr;
@@ -133,7 +166,7 @@ export default function CalendarPage() {
   const toggleSource = (key: string) =>
     setHiddenSources(prev => { const n = new Set(prev); n.has(key) ? n.delete(key) : n.add(key); return n; });
 
-  const totalVisible = connections.length + uniqueBoards.length;
+  const totalVisible = connections.length + uniqueBoards.length + (hasOwnMeetings ? 1 : 0) + (hasSharedMeetings ? 1 : 0);
   const totalHidden  = hiddenSources.size;
 
   return (
@@ -182,6 +215,33 @@ export default function CalendarPage() {
                       </button>
                     );
                   })}
+
+                  {/* Bibix meeting sources */}
+                  {(hasOwnMeetings || hasSharedMeetings) && uniqueBoards.length > 0 && (
+                    <div className="border-t border-gray-100 my-1" />
+                  )}
+                  {hasOwnMeetings && (
+                    <button onClick={() => toggleSource('bibix-own')}
+                      className="w-full flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-gray-50 text-left">
+                      <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 ${!hiddenSources.has('bibix-own') ? '' : 'border border-gray-300'}`}
+                        style={!hiddenSources.has('bibix-own') ? { backgroundColor: BIBIX_OWN_COLOR } : {}}>
+                        {!hiddenSources.has('bibix-own') && <Check size={10} className="text-white" />}
+                      </div>
+                      <CalendarIcon size={12} className="flex-shrink-0" style={{ color: BIBIX_OWN_COLOR }} />
+                      <span className="text-sm text-gray-700 flex-1">My meetings</span>
+                    </button>
+                  )}
+                  {hasSharedMeetings && (
+                    <button onClick={() => toggleSource('bibix-shared')}
+                      className="w-full flex items-center gap-3 px-2 py-2 rounded-lg hover:bg-gray-50 text-left">
+                      <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 ${!hiddenSources.has('bibix-shared') ? '' : 'border border-gray-300'}`}
+                        style={!hiddenSources.has('bibix-shared') ? { backgroundColor: BIBIX_SHARED_COLOR } : {}}>
+                        {!hiddenSources.has('bibix-shared') && <Check size={10} className="text-white" />}
+                      </div>
+                      <CalendarIcon size={12} className="flex-shrink-0" style={{ color: BIBIX_SHARED_COLOR }} />
+                      <span className="text-sm text-gray-700 flex-1">Shared with me</span>
+                    </button>
+                  )}
 
                   {/* Divider between boards and calendars */}
                   {uniqueBoards.length > 0 && connections.length > 0 && (
@@ -250,11 +310,11 @@ export default function CalendarPage() {
                   ${today ? 'bg-monday-blue text-white' : 'text-gray-700'}`}>
                   {format(day, 'd')}
                 </div>
-                {/* + button only if a calendar is connected (creates external event) */}
-                {inMonth && connections.length > 0 && (
+                {/* + create a meeting (Bibix meeting; no external calendar required) */}
+                {inMonth && (
                   <button onClick={() => setCreateDate(day)}
                     className="opacity-0 group-hover:opacity-100 p-0.5 rounded hover:bg-gray-100 text-gray-400 hover:text-monday-blue transition-opacity"
-                    title="Create calendar event">
+                    title="Create meeting">
                     <Plus size={13} />
                   </button>
                 )}
@@ -273,17 +333,30 @@ export default function CalendarPage() {
                   </div>
                 ))}
 
-                {/* External calendar events (fill up to 3 total) */}
+                {/* Calendar events + Bibix meetings (fill up to 3 total) */}
                 {dayEvents.slice(0, Math.max(0, 3 - dayTasks.length)).map(ev => {
-                  const color = PROVIDER_COLOR[ev._provider || 'google'] || '#1a73e8';
-                  return (
+                  const color = colorForEvent(ev);
+                  const titleAttr = ev._busy
+                    ? `Busy${ev.owner_name ? ` · ${ev.owner_name}` : ''}`
+                    : `${ev.summary}${ev._accountEmail ? ` (${ev._accountEmail})` : ''}`;
+                  const inner = (
+                    <>
+                      {ev._busy ? <Lock size={9} className="flex-shrink-0" /> : <CalendarIcon size={9} className="flex-shrink-0" />}
+                      <span className="truncate">{formatEventTime(ev)} {ev.summary}</span>
+                    </>
+                  );
+                  return ev.htmlLink ? (
                     <a key={ev.id} href={ev.htmlLink} target="_blank" rel="noreferrer"
                       className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium hover:opacity-80 truncate text-white"
-                      style={{ backgroundColor: color }}
-                      title={`${ev.summary} (${ev._accountEmail})`}>
-                      <CalendarIcon size={9} className="flex-shrink-0" />
-                      <span className="truncate">{formatEventTime(ev)} {ev.summary}</span>
+                      style={{ backgroundColor: color }} title={titleAttr}>
+                      {inner}
                     </a>
+                  ) : (
+                    <div key={ev.id}
+                      className="flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium truncate text-white"
+                      style={{ backgroundColor: color }} title={titleAttr}>
+                      {inner}
+                    </div>
                   );
                 })}
 

@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Bibix Chats">
+<meta name="theme-color" content="#0f9d8a">
+<link rel="manifest" href="/chats/manifest.json">
+<link rel="icon" href="/chats/icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/chats/icon-192.png">
+<title>Bibix Chats</title>
+<link rel="stylesheet" href="/chats/style.css?v=5">
+</head>
+<body>
+<div id="app">
+
+  <!-- Login -->
+  <section id="s-login" class="screen hidden">
+    <div class="login-card">
+      <div class="brand"><span class="logo">A</span><div><b>Bibix Chats</b><small>WhatsApp &amp; Telegram with AI translation</small></div></div>
+      <div class="err" id="login-err"></div>
+      <label>Email<input id="login-email" type="email" autocomplete="username" inputmode="email"></label>
+      <label>Password<input id="login-pass" type="password" autocomplete="current-password"></label>
+      <button class="btn primary wide" id="login-btn">Sign in</button>
+    </div>
+  </section>
+
+  <!-- Main -->
+  <section id="s-main" class="screen hidden">
+    <aside id="pane-list">
+      <header class="pane-head">
+        <span class="logo" title="Bibix Chats">A</span>
+        <select id="account-select" title="Account"></select>
+        <button class="icon" id="btn-add-account" title="Add an account (WhatsApp or Telegram)">＋</button>
+        <button class="icon" id="btn-remove-account" title="Remove the selected account">－</button>
+        <button class="icon" id="btn-settings" title="Settings">⚙</button>
+      </header>
+      <div id="account-banner" class="banner hidden"></div>
+      <div class="search-row"><input id="chat-search" placeholder="Search chats" autocomplete="off"><button class="icon" id="btn-new-chat" title="New chat: start a conversation with a phone number">✎</button></div>
+      <div class="tabs"><button class="tab on" data-tab="0">Chats</button><button class="tab" data-tab="1">Archived</button></div>
+      <div id="chat-list" class="chat-list"></div>
+      <div id="list-empty" class="empty hidden"></div>
+    </aside>
+
+    <main id="pane-thread" class="hidden">
+      <header class="thread-head">
+        <button class="icon back" id="btn-back" title="Back">‹</button>
+        <div class="avatar" id="thread-avatar"></div>
+        <div class="thread-title"><b id="thread-name"></b><small id="thread-sub"></small></div>
+        <button class="icon" id="btn-call" title="Call / live captions">📞</button>
+        <button class="icon" id="btn-thread-menu" title="More">⋮</button>
+      </header>
+      <div id="call-menu" class="menu hidden"></div>
+      <div class="bx-bar" id="bx-bar">
+        <span class="bx-toggle on" id="bx-enabled" title="Enable / disable translation for all chats"></span>
+        <label>Send in <select id="bx-target" title="Language my messages are sent in (per chat)"></select></label>
+        <label title="Translate incoming messages into my language"><input type="checkbox" id="bx-auto"> Incoming → <span id="bx-mylang"></span></label>
+        <button class="sm" id="bx-visible" title="Translate the visible incoming messages now">Translate visible</button>
+        <button class="sm" id="bx-older" title="Ask the phone for older messages">Older…</button>
+        <span class="bx-status" id="bx-status"></span>
+      </div>
+      <div id="messages" class="messages"><div id="messages-inner"></div></div>
+      <div id="typing" class="typing hidden"></div>
+      <footer class="composer">
+        <div id="reply-bar" class="reply-bar hidden"><div class="reply-q"><b id="reply-who">Reply</b><span id="reply-text"></span></div><span class="act" id="reply-cancel" title="Cancel reply">✕</span></div>
+        <div id="attach-strip" class="attach-strip hidden"></div>
+        <div class="composer-row">
+          <button class="icon" id="btn-attach" title="Attach photos, videos or files (or paste / drop them)">📎</button>
+          <input type="file" id="attach-input" multiple accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip" hidden>
+          <button class="icon" id="btn-emoji" title="Emoji">😊</button>
+          <button class="icon" id="btn-qa" title="Quick answers (Ctrl/⌘+Shift+Q) — click: insert to edit · second click/➤: translate &amp; send">⚡</button>
+          <textarea id="draft" rows="1" placeholder="Message…"></textarea>
+          <button class="btn primary" id="btn-send" title="Translate the draft and send (Enter / Ctrl+Shift+Enter)">Translate &amp; send</button>
+        </div>
+        <div class="composer-row small">
+          <button class="sm" id="btn-inplace" title="Translate the draft in the box so you can review it (Ctrl/⌘+Shift+T)">Translate</button>
+          <button class="sm hidden" id="btn-undo" title="Restore what you typed (Ctrl/⌘+Shift+U)">Undo</button>
+          <button class="sm" id="btn-raw" title="Send exactly what you typed, no translation">Send as typed</button>
+          <span class="muted" id="composer-hint"></span>
+        </div>
+      </footer>
+    </main>
+
+    <div id="thread-placeholder" class="placeholder">
+      <div><div class="big">💬</div><p>Pick a chat to start.</p><p class="muted">Messages you type are translated into the chat's language before they go out; incoming messages are translated into yours.</p></div>
+    </div>
+  </section>
+
+  <!-- Message actions (tap a bubble) -->
+  <div id="msg-menu" class="menu hidden">
+    <button data-act="reply">↩ Reply</button>
+    <button data-act="forward">↪ Forward</button>
+    <button data-act="translate">🌐 Translate</button>
+    <button data-act="copy">⎘ Copy text</button>
+    <button data-act="quote">“ Quote in draft</button>
+    <button data-act="sticker">⭐ Save as my sticker</button>
+  </div>
+
+  <!-- New chat -->
+  <div id="m-newchat" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><b>New chat</b><span class="act" data-close="m-newchat">✕</span></div>
+      <p class="muted" id="nc-help"></p>
+      <div class="row"><input id="nc-input" placeholder="+34 600 111 222" inputmode="tel" autocomplete="off"><button class="btn primary" id="nc-go">Open chat</button></div>
+      <p class="muted" id="nc-status"></p>
+    </div>
+  </div>
+
+  <!-- Remove account -->
+  <div id="m-rmacct" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><b>Remove account</b><span class="act" data-close="m-rmacct">✕</span></div>
+      <p id="rm-text"></p>
+      <div class="row end"><button class="btn" id="rm-remove">Remove from Bibix</button><button class="btn primary" id="rm-unlink">Unlink &amp; remove</button></div>
+      <p class="muted"><b>Unlink &amp; remove</b> also logs the device out on the phone. <b>Remove from Bibix</b> only deletes it here (end the session on the phone yourself).</p>
+    </div>
+  </div>
+
+  <!-- Forward picker -->
+  <div id="m-forward" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><b>Forward to…</b><span class="act" data-close="m-forward">✕</span></div>
+      <div class="fw-preview" id="fw-preview"></div>
+      <input id="fw-search" placeholder="Search chats" autocomplete="off">
+      <div id="fw-list" class="fw-list"></div>
+      <div class="row end"><span class="muted" id="fw-count"></span><button class="btn primary" id="fw-send" disabled>Forward</button></div>
+    </div>
+  </div>
+
+  <!-- Live captions (microphone) -->
+  <div id="call-panel" class="callp hidden">
+    <div class="callp-head"><span>🎙 Live captions</span><span class="callp-state" id="callp-state">starting…</span><span class="act" id="callp-close" title="Stop">✕</span></div>
+    <div class="callp-lines" id="callp-lines"></div>
+    <div class="callp-foot muted">Put the call on speaker; what is heard is transcribed and translated into <span id="callp-lang"></span>. Nothing is sent into the call.</div>
+  </div>
+
+  <!-- Emoji picker -->
+  <div id="emoji-panel" class="emoji hidden">
+    <div class="emoji-tabs" id="emoji-tabs"></div>
+    <div class="emoji-grid" id="emoji-grid"></div>
+    <div class="stk-bar hidden" id="stk-bar"><button class="sm" id="stk-add">+ From picture</button><button class="sm" id="stk-edit">Edit</button><span class="muted">Tap a sticker to send it</span></div>
+    <input type="file" id="stk-input" accept="image/*" multiple hidden>
+  </div>
+
+  <!-- Lightbox -->
+  <div id="lightbox" class="lightbox hidden">
+    <div class="lb-bar"><a id="lb-dl" class="act" download title="Download">⬇</a><span class="act" id="lb-close" title="Close (Esc)">✕</span></div>
+    <div class="lb-body" id="lb-body"></div>
+  </div>
+
+  <!-- Quick answers panel -->
+  <div id="qa-panel" class="qa hidden">
+    <div class="qa-head"><input id="qa-search" placeholder="Search quick answers… (Enter inserts the first match, Shift+Enter sends it)"><span class="act" id="qa-close" title="Close (Esc)">✕</span></div>
+    <div class="qa-body"><div id="qa-groups" class="qa-groups"></div><div id="qa-list" class="qa-list"></div></div>
+    <div class="qa-foot"><span><b>Click</b>: put in the box to edit · <b>Second click / ➤</b>: translate &amp; send now</span><a id="qa-manage">Manage ↗</a></div>
+  </div>
+
+  <!-- Add / link account modal -->
+  <div id="m-link" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head"><b id="link-title">Add an account</b><span class="act" data-close="m-link">✕</span></div>
+      <div id="link-choose" class="choose">
+        <button class="choice" data-platform="whatsapp"><span class="big">💬</span><b>WhatsApp</b><small>Linked device (unofficial, see warning)</small></button>
+        <button class="choice" data-platform="telegram"><span class="big">✈️</span><b>Telegram</b><small>Official client API, shows as “Bibix Chats” in Devices</small></button>
+      </div>
+      <div id="link-wa" class="hidden">
+      <div class="warn">
+        <b>⚠️ Unofficial client — read before linking.</b> Bibix Chats connects as a <i>linked device</i> using the same protocol as WhatsApp Web, but it is not an official WhatsApp client.
+        This is against WhatsApp's Terms of Service and <b>your number can be temporarily or permanently banned</b>. Use a <b>secondary number</b> first. Do not use it for bulk or marketing messages.
+      </div>
+      <div id="link-body">
+        <div class="link-steps">
+          <p>On your phone: <b>WhatsApp → Settings → Linked devices → Link a device</b>, then scan this code. It appears under Linked Devices as <b id="link-browser">Chrome (Bibix)</b>.</p>
+          <div id="link-qr" class="qr"><div class="spinner"></div></div>
+          <details id="link-phone-wrap"><summary>Can't scan (this is the same phone)? Link with your phone number</summary>
+            <div class="row"><input id="link-phone" placeholder="Phone with country code, e.g. 34600111222" inputmode="tel"><button class="btn" id="link-phone-btn">Get code</button></div>
+            <div id="link-code" class="code hidden"></div>
+            <p class="muted">On the phone: Linked devices → Link a device → <b>Link with phone number instead</b> → type the code.</p>
+          </details>
+          <p class="muted" id="link-status">Waiting for QR…</p>
+        </div>
+      </div>
+      </div>
+      <div id="link-tg" class="hidden">
+        <div id="tg-creds" class="hidden">
+          <p class="muted">Telegram needs an <b>API id</b> and <b>API hash</b> (free, one-time): log in at <a href="https://my.telegram.org/apps" target="_blank" rel="noopener">my.telegram.org/apps</a>, create an app (any name), and paste the two values here. They are saved in your Bibix settings.</p>
+          <div class="grid2"><label>API id <input id="tg-api-id" inputmode="numeric" placeholder="1234567"></label><label>API hash <input id="tg-api-hash" placeholder="32 hex characters"></label></div>
+        </div>
+        <div id="tg-step-phone" class="tg-step">
+          <p>Your Telegram phone number. Telegram sends a login code to your <b>other Telegram app</b> (or by SMS).</p>
+          <div class="row"><input id="tg-phone" placeholder="+34 600 111 222" inputmode="tel" autocomplete="tel"><button class="btn primary" id="tg-phone-btn">Send code</button></div>
+        </div>
+        <div id="tg-step-code" class="tg-step hidden">
+          <p>Enter the code Telegram just sent you.</p>
+          <div class="row"><input id="tg-code" placeholder="12345" inputmode="numeric" autocomplete="one-time-code"><button class="btn primary" id="tg-code-btn">Sign in</button></div>
+        </div>
+        <div id="tg-step-password" class="tg-step hidden">
+          <p>This account has two-step verification. Enter your Telegram password<span id="tg-hint"></span>.</p>
+          <div class="row"><input id="tg-password" type="password" placeholder="Telegram cloud password" autocomplete="current-password"><button class="btn primary" id="tg-password-btn">Sign in</button></div>
+        </div>
+        <p class="muted" id="tg-status"></p>
+        <p class="muted">Afterwards it appears in Telegram → Settings → Devices as <b>Bibix Chats</b>; you can end the session from there at any time.</p>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings modal -->
+  <div id="m-settings" class="modal hidden">
+    <div class="modal-card wide">
+      <div class="modal-head"><b>Settings</b><span class="act" data-close="m-settings">✕</span></div>
+      <div class="tabs"><button class="tab on" data-stab="general">Translation</button><button class="tab" data-stab="qa">Quick answers</button><button class="tab" data-stab="accounts">Accounts</button></div>
+      <div class="stab" data-stab="general">
+        <div class="grid2">
+          <label>My language <select id="st-my"></select></label>
+          <label>Send messages in (default) <select id="st-target"></select></label>
+          <label class="chk"><input type="checkbox" id="st-auto"> Translate incoming messages into my language</label>
+          <label>On opening a chat, translate the last <input id="st-initial" type="number" min="0" max="50" style="width:70px"> incoming</label>
+          <label class="chk"><input type="checkbox" id="st-orig"> Under my sent bubbles, show what I originally typed</label>
+          <label class="chk"><input type="checkbox" id="st-enter"> Enter = translate &amp; send (Shift+Enter = newline)</label>
+          <label class="chk"><input type="checkbox" id="st-notif"> Push notifications for new messages</label>
+        </div>
+        <fieldset class="fs"><legend>Notify me about</legend>
+          <label class="chk"><input type="checkbox" id="st-nf-groups"> Group messages</label>
+          <label class="chk"><input type="checkbox" id="st-nf-archived"> Archived chats</label>
+          <label class="chk"><input type="checkbox" id="st-nf-muted"> Chats muted on the phone</label>
+          <p class="muted">Archived and muted chats never notify unless ticked — the badge and the chat list still update.</p>
+        </fieldset>
+        <label>Style instructions <input id="st-style" placeholder='e.g. "informal, use tú" or "business formal"'></label>
+        <div class="grid2">
+          <label>AI provider <select id="st-provider"><option value="">Account default</option></select></label>
+          <label>Model (optional) <input id="st-model" placeholder="provider default"></label>
+        </div>
+        <p class="muted" id="st-provider-info"></p>
+        <label>Speech-to-text for live captions <select id="st-stt"><option value="">Auto (Groq, then OpenAI)</option><option value="groq">Groq Whisper</option><option value="openai">OpenAI</option></select></label>
+        <p class="muted">API keys are stored server-side in Bibix → Settings → AI providers. Groq is free; set your key there.</p>
+        <div class="row end"><button class="btn primary" id="st-save">Save</button></div>
+      </div>
+      <div class="stab hidden" data-stab="qa">
+        <div class="qa-manage">
+          <div class="qa-mg"><div class="row"><b>Groups</b><button class="sm" id="qam-add-group">+ Group</button></div><div id="qam-groups"></div></div>
+          <div class="qa-mi"><div class="row"><b id="qam-title">Answers</b><button class="sm" id="qam-add-item">+ Answer</button></div><div id="qam-items"></div></div>
+        </div>
+        <div class="row end"><button class="sm" id="qam-export">Export JSON</button><button class="sm" id="qam-import">Import JSON</button><input type="file" id="qam-file" accept="application/json" hidden><button class="btn primary" id="qam-save">Save</button></div>
+      </div>
+      <div class="stab hidden" data-stab="accounts">
+        <div id="st-accounts"></div>
+        <div class="row"><button class="btn" id="st-add-account">+ Add account</button></div>
+        <p class="muted"><b>Unlink</b> logs the device out on WhatsApp/Telegram and deletes its synced chats from Bibix. <b>Remove</b> only deletes it from Bibix (end the session on the phone yourself). <b>Rename</b> sets the label shown in the account list.</p>
+        <fieldset class="fs"><legend>Telegram API credentials</legend>
+          <p class="muted" id="st-tg-info"></p>
+          <div class="grid2"><label>API id <input id="st-tg-id" inputmode="numeric" placeholder="from my.telegram.org"></label><label>API hash <input id="st-tg-hash" placeholder="from my.telegram.org"></label></div>
+          <div class="row end"><button class="btn primary" id="st-tg-save">Save</button></div>
+        </fieldset>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+</div>
+<script src="/chats/app.js?v=6"></script>
+</body>
+</html>

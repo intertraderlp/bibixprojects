@@ -2,7 +2,8 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const { v4: uuidv4 } = require('uuid');
 const db = require('../db/database');
-const { authenticate, requireAdmin, requireSuperAdmin } = require('../middleware/auth');
+const jwt = require('jsonwebtoken');
+const { authenticate, requireAdmin, requireSuperAdmin, JWT_SECRET } = require('../middleware/auth');
 
 const router = express.Router();
 
@@ -92,6 +93,36 @@ router.put('/users/:id/role', authenticate, requireSuperAdmin, (req, res) => {
   db.prepare('UPDATE users SET role = ? WHERE id = ?').run(role, req.params.id);
   const updated = db.prepare('SELECT id, name, email, avatar_color, role, created_at FROM users WHERE id = ?').get(req.params.id);
   res.json(updated);
+});
+
+// ── Impersonate a user — "Sign in as" (admin or super_admin) ──────────────────
+// Returns a fresh JWT for the target user so the admin can see the app exactly
+// as that user does. A caller may only impersonate someone strictly below them
+// in privilege (super_admin > admin > user/readonly). The token carries imp_by
+// claims so the session is auditable and the UI can show a "return" banner.
+const ROLE_RANK = { super_admin: 3, admin: 2, user: 1, readonly: 1 };
+router.post('/users/:id/impersonate', authenticate, requireAdmin, (req, res) => {
+  const caller = db.prepare('SELECT id, name, role FROM users WHERE id = ?').get(req.user.id);
+  const target = db.prepare('SELECT id, name, email, avatar_color, role FROM users WHERE id = ?').get(req.params.id);
+  if (!target) return res.status(404).json({ error: 'User not found' });
+  if (target.id === caller.id) return res.status(400).json({ error: 'You cannot impersonate yourself' });
+
+  const callerRank = ROLE_RANK[caller.role] || 0;
+  const targetRank = ROLE_RANK[target.role] || 0;
+  if (targetRank >= callerRank) {
+    return res.status(403).json({ error: 'You can only sign in as users with lower privileges than you' });
+  }
+  // Never let an impersonation session itself spawn another impersonation
+  if (req.user.imp_by) return res.status(403).json({ error: 'Already impersonating — return to your account first' });
+
+  const token = jwt.sign(
+    { id: target.id, name: target.name, email: target.email, role: target.role,
+      imp_by: caller.id, imp_by_name: caller.name },
+    JWT_SECRET,
+    { expiresIn: '2h' }
+  );
+  console.log(`[impersonate] ${caller.name} (${caller.id}) signed in as ${target.name} (${target.id})`);
+  res.json({ token, user: { id: target.id, name: target.name, email: target.email, avatar_color: target.avatar_color, role: target.role } });
 });
 
 // ── Update permissions for a user (admin or super_admin) ──────────────────────

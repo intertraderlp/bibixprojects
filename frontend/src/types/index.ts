@@ -1,6 +1,6 @@
 export type UserRole = 'super_admin' | 'admin' | 'user' | 'readonly';
 
-export type AppModule = 'boards' | 'calendar' | 'bibixbot' | 'scheduling' | 'crm' | 'instagram' | 'linkedin' | 'tiktok' | 'marketing' | 'invoices';
+export type AppModule = 'boards' | 'calendar' | 'bibixbot' | 'scheduling' | 'crm' | 'instagram' | 'linkedin' | 'tiktok' | 'marketing' | 'invoices' | 'extensions' | 'chats';
 
 export interface User {
   id: string;
@@ -30,6 +30,8 @@ export interface Board {
   created_at: string;
   workspace_name?: string; // populated for boards shared directly (not via workspace)
   access?: string;
+  name_col_width?: number;
+  name_col_label?: string | null;
 }
 
 export interface UserGroup {
@@ -40,7 +42,7 @@ export interface UserGroup {
   created_at?: string;
 }
 
-export type ColumnType = 'text' | 'status' | 'person' | 'date' | 'number' | 'checkbox' | 'tags' | 'priority' | 'link' | 'timeline' | 'attachments';
+export type ColumnType = 'text' | 'status' | 'person' | 'date' | 'number' | 'checkbox' | 'tags' | 'priority' | 'link' | 'timeline' | 'attachments' | 'formula' | 'time_tracking' | 'last_updated';
 
 export interface StatusOption {
   label: string;
@@ -49,6 +51,8 @@ export interface StatusOption {
 
 export interface ColumnSettings {
   options?: StatusOption[];
+  summary?: string;
+  formula?: string;
 }
 
 export interface Column {
@@ -59,6 +63,19 @@ export interface Column {
   settings: ColumnSettings;
   position: number;
   width?: number;
+}
+
+export interface MessageTemplate {
+  id: string;
+  board_id: string;
+  name: string;
+  target_column: string;
+  body: string;
+  ai_provider: string | null;
+  apply_styling: number;
+  position: number;
+  created_by?: string;
+  created_at?: string;
 }
 
 export interface Group {
@@ -79,6 +96,7 @@ export interface Item {
   created_by: string;
   created_at: string;
   updated_at: string;
+  updated_by?: string | null;
   parent_item_id?: string | null;
 }
 

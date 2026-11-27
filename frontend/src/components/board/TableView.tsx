@@ -1,5 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import { createPortal } from 'react-dom';
+import { useSearchParams } from 'react-router-dom';
 import {
   DndContext, DragOverlay, closestCorners, PointerSensor, KeyboardSensor,
   useSensor, useSensors, DragStartEvent, DragOverEvent, DragEndEvent,
@@ -9,7 +10,8 @@ import {
   horizontalListSortingStrategy, useSortable, arrayMove,
 } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Plus, ChevronDown, ChevronRight, MoreHorizontal, Trash2, GripVertical, Settings, ChevronUp, Filter, X, ArrowUpAZ, ArrowDownAZ, ArrowUp, ArrowDown } from 'lucide-react';
+import { Plus, ChevronDown, ChevronRight, MoreHorizontal, Trash2, GripVertical, Settings, ChevronUp, Filter, X, ArrowUpAZ, ArrowDownAZ, ArrowUp, ArrowDown, Sigma, Zap, Sparkles, ExternalLink, Copy, CornerUpRight, Pencil } from 'lucide-react';
+import { totalSecondsFromRaw, formatHMS } from '../../lib/timeTracking';
 import { useBoardStore } from '../../store/boardStore';
 import api from '../../api/client';
 import type { Column, Group, Item } from '../../types';
@@ -17,12 +19,61 @@ import CellRenderer from '../columns/CellRenderer';
 import ItemModal from './ItemModal';
 import AddColumnModal from './AddColumnModal';
 import ColumnSettingsModal from './ColumnSettingsModal';
+import TransferItemsModal from './TransferItemsModal';
 import Dropdown, { DropdownItem } from '../ui/Dropdown';
 import toast from 'react-hot-toast';
 
 const GROUP_COLORS = ['#0073ea','#e2445c','#00c875','#fdab3d','#a25ddc','#037f4c','#bb3354','#ff642e'];
 const NAME_COL_WIDTH = 300;
 const DEFAULT_COL_WIDTH = 140;
+
+// ─── Column summaries ────────────────────────────────────────────────────────
+type SummaryType = 'sum' | 'avg' | 'min' | 'max' | 'count' | 'empty' | 'pct_checked' | 'checked' | 'breakdown' | 'total_time';
+
+const SUMMARY_LABELS: Record<SummaryType, string> = {
+  sum: 'Sum', avg: 'Average', min: 'Min', max: 'Max', count: 'Count filled', empty: 'Count empty',
+  pct_checked: '% checked', checked: 'Checked', breakdown: 'Breakdown', total_time: 'Total time',
+};
+
+function summaryOptionsFor(type: string): SummaryType[] {
+  if (type === 'number') return ['sum', 'avg', 'min', 'max', 'count', 'empty'];
+  if (type === 'checkbox') return ['pct_checked', 'checked', 'empty'];
+  if (type === 'status' || type === 'priority') return ['count', 'empty', 'breakdown'];
+  if (type === 'time_tracking') return ['total_time', 'count', 'empty'];
+  return ['count', 'empty'];
+}
+
+function fmtNum(n: number): string {
+  return (Math.round(n * 100) / 100).toLocaleString(undefined, { maximumFractionDigits: 2 });
+}
+
+function computeSummary(s: SummaryType, values: (string | null)[]): string {
+  const total = values.length;
+  const filled = values.filter(v => v != null && String(v).trim() !== '');
+  switch (s) {
+    case 'count': return String(filled.length);
+    case 'empty': return String(total - filled.length);
+    case 'checked': { const c = values.filter(v => v === 'true').length; return `${c}/${total}`; }
+    case 'pct_checked': { const c = values.filter(v => v === 'true').length; return total ? `${Math.round((c / total) * 100)}%` : '0%'; }
+    case 'total_time': return formatHMS(values.reduce((s, v) => s + totalSecondsFromRaw(v), 0));
+    case 'breakdown': {
+      const counts: Record<string, number> = {};
+      filled.forEach(v => { counts[v as string] = (counts[v as string] || 0) + 1; });
+      const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+      const top = entries.slice(0, 3).map(([k, n]) => `${k} ${n}`).join(' · ');
+      return entries.length > 3 ? `${top} +${entries.length - 3}` : top;
+    }
+    default: {
+      const nums = filled.map(v => Number(v)).filter(n => !isNaN(n));
+      if (!nums.length) return '—';
+      if (s === 'sum') return fmtNum(nums.reduce((a, b) => a + b, 0));
+      if (s === 'avg') return fmtNum(nums.reduce((a, b) => a + b, 0) / nums.length);
+      if (s === 'min') return fmtNum(Math.min(...nums));
+      if (s === 'max') return fmtNum(Math.max(...nums));
+      return '';
+    }
+  }
+}
 const MIN_COL_WIDTH = 80;
 
 function OptionFilterDropdown({ opts, value, onChange }: {
@@ -106,23 +157,38 @@ function OptionFilterDropdown({ opts, value, onChange }: {
 
 // ─── Sortable wrappers ───────────────────────────────────────────────────────
 
-function SortableColumnHeader({ col, width, sortDir, onResize, onSettings, onDelete, onSort, onFilterOpen }: {
+function SortableColumnHeader({ col, width, sortDir, onResize, onSettings, onDelete, onSort, onFilterOpen, onSummarize, onRename }: {
   col: Column; width: number; sortDir?: 'asc' | 'desc' | null;
   onResize: (colId: string, e: React.PointerEvent) => void;
   onSettings: (col: Column) => void;
   onDelete: (col: Column) => void;
   onSort: (colId: string, dir: 'asc' | 'desc') => void;
   onFilterOpen: (colId: string) => void;
+  onSummarize: (col: Column, s: SummaryType | null) => void;
+  onRename: (colId: string, name: string) => void;
 }) {
+  const curSummary = (col.settings as { summary?: SummaryType })?.summary;
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: col.id, data: { type: 'column' } });
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(col.name);
+  const commit = () => { setEditing(false); const n = draft.trim(); if (n && n !== col.name) onRename(col.id, n); };
   return (
     <div ref={setNodeRef} style={{ width, minWidth: width, transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.4 : 1 }}
       className="relative flex items-center justify-center border-r border-gray-200 bg-white text-xs font-medium text-gray-500 select-none group h-9 flex-shrink-0">
       <span {...attributes} {...listeners} className="absolute left-1 cursor-grab text-gray-300 hover:text-gray-500">
         <GripVertical size={12} />
       </span>
-      <span className="truncate px-4 flex items-center gap-1">
-        {col.name}
+      <span className="truncate px-4 flex items-center gap-1 max-w-full">
+        {editing ? (
+          <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
+            onBlur={commit}
+            onKeyDown={e => { if (e.key === 'Enter') commit(); if (e.key === 'Escape') { setEditing(false); setDraft(col.name); } }}
+            onPointerDown={e => e.stopPropagation()}
+            className="text-xs font-medium text-gray-700 outline-none border-b border-monday-blue bg-transparent w-24 min-w-0 text-center" />
+        ) : (
+          <span className="cursor-pointer hover:text-monday-blue truncate" title="Double-click to rename"
+            onDoubleClick={() => { setDraft(col.name); setEditing(true); }}>{col.name}</span>
+        )}
         {sortDir === 'asc' && <ArrowUp size={10} className="text-monday-blue flex-shrink-0" />}
         {sortDir === 'desc' && <ArrowDown size={10} className="text-monday-blue flex-shrink-0" />}
       </span>
@@ -135,6 +201,16 @@ function SortableColumnHeader({ col, width, sortDir, onResize, onSettings, onDel
         <DropdownItem onClick={() => onSort(col.id, 'desc')}><ArrowDownAZ size={13} /> Sort Z → A</DropdownItem>
         <DropdownItem onClick={() => onFilterOpen(col.id)}><Filter size={13} /> Filter by this column</DropdownItem>
         <div className="border-t border-gray-100 my-1" />
+        <div className="px-4 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Summarize</div>
+        {summaryOptionsFor(col.type).map(s => (
+          <DropdownItem key={s} onClick={() => onSummarize(col, s)}>
+            <Sigma size={13} /> <span className="flex-1">{SUMMARY_LABELS[s]}</span>
+            {curSummary === s && <span className="text-monday-blue">✓</span>}
+          </DropdownItem>
+        ))}
+        {curSummary && <DropdownItem onClick={() => onSummarize(col, null)}><X size={13} /> Clear summary</DropdownItem>}
+        <div className="border-t border-gray-100 my-1" />
+        <DropdownItem onClick={() => { setDraft(col.name); setEditing(true); }}><Pencil size={13} /> Rename</DropdownItem>
         <DropdownItem onClick={() => onSettings(col)}><Settings size={13} /> Edit Column</DropdownItem>
         <DropdownItem danger onClick={() => onDelete(col)}><Trash2 size={13} /> Delete</DropdownItem>
       </Dropdown>
@@ -144,10 +220,11 @@ function SortableColumnHeader({ col, width, sortDir, onResize, onSettings, onDel
   );
 }
 
-function SortableGroupHeader({ group, itemCount, collapsed, filterActive, onToggle, onRename, onColorChange, onDelete, onFilterToggle }: {
+function SortableGroupHeader({ group, itemCount, collapsed, filterActive, onToggle, onRename, onColorChange, onDelete, onFilterToggle, selectState, onToggleSelectAll }: {
   group: Group; itemCount: number; collapsed: boolean; filterActive: boolean;
   onToggle: () => void; onRename: (name: string) => void;
   onColorChange: (color: string) => void; onDelete: () => void; onFilterToggle: () => void;
+  selectState?: 'none' | 'some' | 'all'; onToggleSelectAll?: () => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: `group-${group.id}`, data: { type: 'group', groupId: group.id } });
   const [editing, setEditing] = useState(false);
@@ -161,6 +238,13 @@ function SortableGroupHeader({ group, itemCount, collapsed, filterActive, onTogg
         <button onClick={onToggle} className="text-gray-500 hover:text-gray-700">
           {collapsed ? <ChevronRight size={15} /> : <ChevronDown size={15} />}
         </button>
+        {onToggleSelectAll && (
+          <input type="checkbox" checked={selectState === 'all'}
+            ref={el => { if (el) el.indeterminate = selectState === 'some'; }}
+            onChange={onToggleSelectAll}
+            title="Select all in group"
+            className="w-3.5 h-3.5 cursor-pointer accent-monday-blue flex-shrink-0" />
+        )}
         <div className="w-3 h-3 rounded-sm flex-shrink-0" style={{ backgroundColor: group.color }} />
         {editing ? (
           <input autoFocus value={draft} onChange={e => setDraft(e.target.value)}
@@ -194,13 +278,17 @@ function SortableGroupHeader({ group, itemCount, collapsed, filterActive, onTogg
   );
 }
 
-function SortableItemRow({ item, group, columns, board, colWidths, onOpen, onDelete, onValueChange, isSubtask, subtaskCount, expanded, onToggleExpand, onAddSubtask }: {
+function SortableItemRow({ item, group, columns, board, colWidths, nameWidth, onOpen, onDelete, onValueChange, isSubtask, subtaskCount, expanded, onToggleExpand, onAddSubtask, onPromote, onDemote, demoteTargets, hasSubtasks, templates, onRunTemplate, selected, onToggleSelect }: {
   item: Item; group: Group; columns: Column[];
-  board: { workspace_id: string }; colWidths: Record<string, number>;
+  board: { workspace_id: string }; colWidths: Record<string, number>; nameWidth: number;
   onOpen: () => void; onDelete: () => void;
   onValueChange: (colId: string, val: string | null) => void;
   isSubtask?: boolean; subtaskCount?: number;
   expanded?: boolean; onToggleExpand?: () => void; onAddSubtask?: () => void;
+  onPromote?: () => void; onDemote?: (parentId: string) => void;
+  demoteTargets?: { id: string; name: string }[]; hasSubtasks?: boolean;
+  templates?: { id: string; name: string }[]; onRunTemplate?: (templateId: string) => void;
+  selected?: boolean; onToggleSelect?: (e: React.MouseEvent) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: item.id, data: { type: isSubtask ? 'subtask' : 'item', groupId: item.group_id, parentId: item.parent_item_id }
@@ -209,10 +297,12 @@ function SortableItemRow({ item, group, columns, board, colWidths, onOpen, onDel
 
   return (
     <div ref={setNodeRef} style={{ transform: CSS.Transform.toString(transform), transition, opacity: isDragging ? 0.35 : 1 }}
-      className={`flex border-b border-gray-100 hover:bg-gray-50 group ${isSubtask ? 'bg-gray-50/50' : 'bg-white'}`}>
+      className={`flex border-b border-gray-100 hover:bg-gray-50 group ${selected ? 'bg-blue-50/60' : isSubtask ? 'bg-gray-50/50' : 'bg-white'}`}>
       {/* Grip + Name col (sticky) */}
-      <div className={`sticky left-0 z-10 flex items-center gap-1 border-r border-gray-200 h-9 flex-shrink-0 ${isSubtask ? 'bg-gray-50' : 'bg-white'} group-hover:bg-gray-50`} style={{ width: NAME_COL_WIDTH }}>
+      <div className={`sticky left-0 z-10 flex items-center gap-1 border-r border-gray-200 h-9 flex-shrink-0 ${selected ? 'bg-blue-50/60' : isSubtask ? 'bg-gray-50' : 'bg-white'} group-hover:bg-gray-50`} style={{ width: nameWidth }}>
         <span {...attributes} {...listeners} className="cursor-grab text-gray-200 hover:text-gray-400 pl-2 flex-shrink-0"><GripVertical size={13} /></span>
+        <input type="checkbox" checked={!!selected} onClick={e => onToggleSelect?.(e)} onChange={() => {}}
+          className={`flex-shrink-0 w-3.5 h-3.5 cursor-pointer accent-monday-blue ${selected ? '' : 'opacity-0 group-hover:opacity-100'}`} />
         {isSubtask && <span className="w-4 flex-shrink-0" />}
         <div className="w-1 h-5 rounded flex-shrink-0" style={{ backgroundColor: group.color }} />
         <span className="flex-1 text-sm text-gray-800 cursor-pointer hover:text-monday-blue truncate px-1" onClick={onOpen}>
@@ -236,6 +326,53 @@ function SortableItemRow({ item, group, columns, board, colWidths, onOpen, onDel
             <Plus size={12} />
           </button>
         )}
+        {/* ⚡ Run template / action */}
+        <Dropdown align="right" className="flex-shrink-0"
+          trigger={
+            <button type="button"
+              className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-amber-500 flex-shrink-0"
+              title="Run action">
+              <Zap size={13} />
+            </button>
+          }>
+          <div className="px-4 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Run template</div>
+          {templates && templates.length > 0
+            ? templates.map(t => (
+                <DropdownItem key={t.id} onClick={() => onRunTemplate?.(t.id)}>
+                  <Sparkles size={13} /> <span className="truncate">{t.name}</span>
+                </DropdownItem>
+              ))
+            : <DropdownItem disabled><Sparkles size={13} /> No templates yet</DropdownItem>}
+        </Dropdown>
+
+        {/* Promote / demote menu */}
+        <Dropdown align="right" className="flex-shrink-0"
+          trigger={
+            <button type="button"
+              className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-gray-600 flex-shrink-0"
+              title="Move in hierarchy">
+              <MoreHorizontal size={13} />
+            </button>
+          }>
+          {isSubtask ? (
+            <DropdownItem onClick={() => onPromote?.()}><ArrowUp size={13} /> Promote to task</DropdownItem>
+          ) : hasSubtasks ? (
+            <DropdownItem disabled><ArrowDown size={13} /> Has subtasks — can't demote</DropdownItem>
+          ) : (demoteTargets && demoteTargets.length > 0) ? (
+            <>
+              <div className="px-4 py-1.5 text-[11px] font-semibold uppercase tracking-wide text-gray-400">Make subtask of</div>
+              <div className="max-h-56 overflow-y-auto">
+                {demoteTargets.map(t => (
+                  <DropdownItem key={t.id} onClick={() => onDemote?.(t.id)}>
+                    <ArrowDown size={13} /> <span className="truncate">{t.name}</span>
+                  </DropdownItem>
+                ))}
+              </div>
+            </>
+          ) : (
+            <DropdownItem disabled><ArrowDown size={13} /> No other task to nest under</DropdownItem>
+          )}
+        </Dropdown>
         <button onClick={onDelete} className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-500 pr-2 flex-shrink-0">
           <Trash2 size={12} />
         </button>
@@ -258,9 +395,140 @@ function SortableItemRow({ item, group, columns, board, colWidths, onOpen, onDel
 
 export default function TableView() {
   const store = useBoardStore();
-  const { board, addItem, deleteItem, addGroup, updateGroup, deleteGroup, updateItemValue, deleteColumn, reorderGroups, reorderItems, reorderColumns } = store;
+  const { board, addItem, deleteItem, updateItem, addGroup, updateGroup, deleteGroup, updateItemValue, updateColumn, deleteColumn, reorderGroups, reorderItems, reorderColumns, getValue, templates, loadTemplates, runTemplate, updateBoard, refreshBoard } = store;
+
+  useEffect(() => { if (board) loadTemplates(board.id); }, [board?.id]);
+
+  // Run a template against a row and report where the result landed.
+  const runTpl = async (templateId: string, itemId: string) => {
+    const tid = toast.loading('Generating…');
+    try {
+      const r = await runTemplate(templateId, itemId);
+      toast.success(`Written to "${r.column_name}"`, { id: tid });
+    } catch (err) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      toast.error(msg || 'Failed to run template', { id: tid });
+    }
+  };
+  const tplList = templates.map(t => ({ id: t.id, name: t.name }));
+
+  // ── Bulk selection ──────────────────────────────────────────────────────────
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkColId, setBulkColId] = useState('');
+  const [bulkValue, setBulkValue] = useState('');
+  const [bulkBusy, setBulkBusy] = useState(false);
+
+  const toggleSelect = (id: string) => setSelected(s => {
+    const n = new Set(s); n.has(id) ? n.delete(id) : n.add(id); return n;
+  });
+  const setGroupSelected = (ids: string[], on: boolean) => setSelected(s => {
+    const n = new Set(s); ids.forEach(id => on ? n.add(id) : n.delete(id)); return n;
+  });
+  const [openColId, setOpenColId] = useState('');
+  const [blockedLinks, setBlockedLinks] = useState<string[]>([]);
+  const [transferMode, setTransferMode] = useState<'copy' | 'move' | null>(null);
+  const clearSelection = () => { setSelected(new Set()); setBulkColId(''); setBulkValue(''); setOpenColId(''); };
+
+  const bulkCol = board?.columns.find(c => c.id === bulkColId) || null;
+
+  // Columns whose cells may hold a URL to open in bulk.
+  const linkableCols = (board?.columns || []).filter(c => c.type === 'link' || c.type === 'text');
+
+  // Turn a cell value into an openable URL, or '' if it isn't one.
+  const toUrl = (raw: unknown): string => {
+    const s = String(raw ?? '').trim();
+    if (!s) return '';
+    if (/^https?:\/\//i.test(s)) return s;
+    if (/^[\w-]+(\.[\w-]+)+(\/|\?|#|$)/.test(s)) return 'https://' + s; // bare domain like foo.com/x
+    return '';
+  };
+
+  const bulkOpenLinks = () => {
+    if (!openColId || selected.size === 0) return;
+    const urls = [...selected].map(id => toUrl(getValue(id, openColId))).filter(Boolean);
+    const unique = [...new Set(urls)];
+    if (unique.length === 0) { toast.error('No links found in that field for the selected items'); return; }
+    if (unique.length > 10 && !confirm(`Open ${unique.length} tabs? Your browser may ask to allow multiple pop-ups.`)) return;
+    // Browsers block all-but-the-first tab opened from one click as pop-ups.
+    // Open each and detect which were blocked (window.open returns null), then
+    // offer the blocked ones in a fallback panel the user can click through.
+    // NOTE: don't pass 'noopener' in the features string — that makes
+    // window.open always return null, defeating block detection; clear opener
+    // manually instead.
+    const blocked: string[] = [];
+    unique.forEach(u => {
+      const w = window.open(u, '_blank');
+      if (w) { try { w.opener = null; } catch { /* cross-origin */ } }
+      else blocked.push(u);
+    });
+    const skipped = selected.size - urls.length;
+    const opened = unique.length - blocked.length;
+    if (blocked.length) {
+      setBlockedLinks(blocked);
+    } else {
+      toast.success(`Opened ${opened} link${opened > 1 ? 's' : ''}${skipped > 0 ? ` · ${skipped} item${skipped > 1 ? 's' : ''} had none` : ''}`);
+    }
+  };
+
+  const applyBulkValue = async () => {
+    if (!bulkColId || selected.size === 0) return;
+    setBulkBusy(true);
+    const ids = [...selected];
+    try {
+      for (const id of ids) {
+        await updateItemValue(id, bulkColId, bulkValue === '' ? null : bulkValue);
+      }
+      toast.success(`Updated ${ids.length} item${ids.length > 1 ? 's' : ''}`);
+    } catch { toast.error('Some updates failed'); }
+    finally { setBulkBusy(false); }
+  };
+
+  const bulkDelete = async () => {
+    if (selected.size === 0 || !confirm(`Delete ${selected.size} selected item(s)? This cannot be undone.`)) return;
+    setBulkBusy(true);
+    const ids = [...selected];
+    try {
+      for (const id of ids) await deleteItem(id);
+      toast.success(`Deleted ${ids.length}`);
+      clearSelection();
+    } catch { toast.error('Some deletions failed'); }
+    finally { setBulkBusy(false); }
+  };
+
+  // Set or clear a column's summary (stored inside the column's settings blob).
+  const handleSummarize = (col: Column, s: SummaryType | null) => {
+    const settings = { ...(col.settings || {}), summary: s || undefined };
+    updateColumn(col.id, { settings } as never);
+  };
+
+  // Promote a subtask to a top-level task, or demote a task into a subtask.
+  const changeParent = async (id: string, parentId: string | null) => {
+    try {
+      await updateItem(id, { parent_item_id: parentId } as never);
+      toast.success(parentId ? 'Made subtask' : 'Promoted to task');
+      if (parentId) setExpandedItems(e => ({ ...e, [parentId]: true }));
+    } catch (err) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error;
+      toast.error(msg || 'Could not move item');
+    }
+  };
 
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
+
+  // Deep-link: open a specific task when arriving via ?item=<id> (e.g. from a reminder).
+  const [searchParams, setSearchParams] = useSearchParams();
+  useEffect(() => {
+    const itemId = searchParams.get('item');
+    if (!itemId || !board) return;
+    const found = board.items.find(i => i.id === itemId);
+    if (found) {
+      setSelectedItem(found);
+      const next = new URLSearchParams(searchParams);
+      next.delete('item');
+      setSearchParams(next, { replace: true });
+    }
+  }, [searchParams, board, setSearchParams]);
+
   const [showAddCol, setShowAddCol] = useState(false);
   const [settingsCol, setSettingsCol] = useState<Column | null>(null);
   const [newItemGroup, setNewItemGroup] = useState<string | null>(null);
@@ -269,9 +537,16 @@ export default function TableView() {
   const [newSubtaskFor, setNewSubtaskFor] = useState<string | null>(null);
   const [newSubtaskName, setNewSubtaskName] = useState('');
   const [colWidths, setColWidths] = useState<Record<string, number>>({});
+  // First ("Item") column — resizable + renamable, persisted on the board.
+  const [nameColW, setNameColW] = useState(NAME_COL_WIDTH);
+  const nameColWRef = useRef(NAME_COL_WIDTH);
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState('');
   const [showFilters, setShowFilters] = useState<Record<string, boolean>>({});
   const [groupFilters, setGroupFilters] = useState<Record<string, { name: string; cols: Record<string, string> }>>({});
   const [sortConfig, setSortConfig] = useState<{ colId: string; dir: 'asc' | 'desc' } | null>(null);
+  const [pageByGroup, setPageByGroup] = useState<Record<string, number>>({});
+  const PAGE_SIZE = 100;
 
   // Active drag
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -289,10 +564,42 @@ export default function TableView() {
     const w: Record<string, number> = {};
     board.columns.forEach(c => { w[c.id] = c.width || DEFAULT_COL_WIDTH; });
     setColWidths(w);
+    setNameColW(board.name_col_width || NAME_COL_WIDTH);
   }, [board?.id]);
 
   // Keep the ref in sync with state so resize closures can read it
   useEffect(() => { colWidthsRef.current = colWidths; }, [colWidths]);
+  useEffect(() => { nameColWRef.current = nameColW; }, [nameColW]);
+
+  // Resize the first ("Item") column; persist the new width on the board.
+  const startResizeName = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    const startX = e.clientX;
+    const startW = nameColWRef.current;
+    let cur = startW;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    const onMove = (ev: PointerEvent) => { cur = Math.max(180, startW + ev.clientX - startX); setNameColW(cur); };
+    const onUp = () => {
+      const bid = useBoardStore.getState().board?.id;
+      if (bid) api.put(`/boards/${bid}`, { name_col_width: Math.round(cur) }).catch(() => {});
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      document.removeEventListener('pointermove', onMove);
+      document.removeEventListener('pointerup', onUp);
+    };
+    document.addEventListener('pointermove', onMove);
+    document.addEventListener('pointerup', onUp);
+  }, []);
+
+  const saveNameLabel = () => {
+    setEditingName(false);
+    const n = nameDraft.trim() || 'Item';
+    const current = board?.name_col_label || 'Item';
+    if (n !== current) updateBoard({ name_col_label: n }).catch(() => {});
+  };
 
   const startResize = useCallback((colId: string, e: React.PointerEvent) => {
     e.preventDefault();
@@ -378,7 +685,15 @@ export default function TableView() {
   const applyGroupFilter = (groupId: string, item: Item) => {
     const f = groupFilters[groupId];
     if (!f) return true;
-    if (f.name && !item.name.toLowerCase().includes(f.name.toLowerCase())) return false;
+    // Free-text search box: match against the item name AND every column value
+    // (searches the whole group — all items are loaded, not just the page).
+    if (f.name) {
+      const q = f.name.toLowerCase();
+      const inName = item.name.toLowerCase().includes(q);
+      const inCols = inName || sortedColumns.some(c =>
+        String(store.getValue(item.id, c.id) ?? '').toLowerCase().includes(q));
+      if (!inName && !inCols) return false;
+    }
     for (const [colId, val] of Object.entries(f.cols || {})) {
       if (!val) continue;
       const col = sortedColumns.find(c => c.id === colId);
@@ -500,7 +815,8 @@ export default function TableView() {
   };
 
   // ─── Render ──────────────────────────────────────────────────────────────────
-  const totalWidth = NAME_COL_WIDTH + sortedColumns.reduce((s, c) => s + (colWidths[c.id] || DEFAULT_COL_WIDTH), 0) + 60;
+  const totalWidth = nameColW + sortedColumns.reduce((s, c) => s + (colWidths[c.id] || DEFAULT_COL_WIDTH), 0) + 60;
+  const nameLabel = board.name_col_label || 'Item';
 
   return (
     <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={onDragStart} onDragOver={onDragOver} onDragEnd={onDragEnd}>
@@ -511,6 +827,15 @@ export default function TableView() {
             {sortedGroups.map(group => {
               const groupItems = topItems(group.id);
               const collapsed = group.collapsed === 1;
+              const filteredItems = groupItems.filter(item => applyGroupFilter(group.id, item));
+              const pageCount = Math.max(1, Math.ceil(filteredItems.length / PAGE_SIZE));
+              const page = Math.min(pageByGroup[group.id] || 0, pageCount - 1);
+              const pagedItems = filteredItems.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE);
+              const setPage = (p: number) => setPageByGroup(s => ({ ...s, [group.id]: Math.max(0, Math.min(p, pageCount - 1)) }));
+
+              const gIds = filteredItems.map(i => i.id);
+              const gSel = gIds.filter(id => selected.has(id)).length;
+              const gSelState: 'none' | 'some' | 'all' = gSel === 0 ? 'none' : gSel === gIds.length ? 'all' : 'some';
 
               return (
                 <div key={group.id} className="mb-6">
@@ -522,14 +847,26 @@ export default function TableView() {
                     onColorChange={color => updateGroup(group.id, { color })}
                     onDelete={() => { if (confirm('Delete group?')) { deleteGroup(group.id); toast.success('Deleted'); } }}
                     onFilterToggle={() => setShowFilters(f => ({ ...f, [group.id]: !f[group.id] }))}
+                    selectState={gSelState}
+                    onToggleSelectAll={() => setGroupSelected(gIds, gSelState !== 'all')}
                   />
 
                   {!collapsed && (
                     <>
                       {/* Column header row */}
                       <div className="flex border-b border-gray-200 bg-white">
-                        <div className="sticky left-0 z-10 bg-white border-r border-gray-200 flex items-center px-4 h-9 flex-shrink-0 text-xs font-medium text-gray-500" style={{ width: NAME_COL_WIDTH }}>
-                          Item
+                        <div className="sticky left-0 z-10 bg-white border-r border-gray-200 flex items-center px-4 h-9 flex-shrink-0 text-xs font-medium text-gray-500 relative" style={{ width: nameColW }}>
+                          {editingName ? (
+                            <input autoFocus value={nameDraft} onChange={e => setNameDraft(e.target.value)}
+                              onBlur={saveNameLabel}
+                              onKeyDown={e => { if (e.key === 'Enter') saveNameLabel(); if (e.key === 'Escape') setEditingName(false); }}
+                              className="text-xs font-medium text-gray-700 outline-none border-b border-monday-blue bg-transparent w-full" />
+                          ) : (
+                            <span className="cursor-pointer hover:text-monday-blue truncate" title="Double-click to rename"
+                              onDoubleClick={() => { setNameDraft(nameLabel); setEditingName(true); }}>{nameLabel}</span>
+                          )}
+                          <div onPointerDown={startResizeName}
+                            className="absolute right-0 top-0 h-full w-1.5 cursor-col-resize hover:bg-monday-blue/40 transition-colors" />
                         </div>
                         <SortableContext items={sortedColumns.map(c => c.id)} strategy={horizontalListSortingStrategy}>
                           {sortedColumns.map(col => (
@@ -541,6 +878,8 @@ export default function TableView() {
                               onDelete={c => { if (confirm(`Delete "${c.name}"?`)) deleteColumn(c.id); }}
                               onSort={handleSort}
                               onFilterOpen={handleFilterOpen}
+                              onSummarize={handleSummarize}
+                              onRename={(id, n) => updateColumn(id, { name: n })}
                             />
                           ))}
                         </SortableContext>
@@ -552,12 +891,12 @@ export default function TableView() {
                       {/* Filter row */}
                       {showFilters[group.id] && (
                         <div className="flex border-b border-blue-200 bg-blue-50/40">
-                          <div className="sticky left-0 z-10 bg-blue-50/60 border-r border-blue-200 flex items-center gap-2 px-3 h-9 flex-shrink-0" style={{ width: NAME_COL_WIDTH }}>
+                          <div className="sticky left-0 z-10 bg-blue-50/60 border-r border-blue-200 flex items-center gap-2 px-3 h-9 flex-shrink-0" style={{ width: nameColW }}>
                             <Filter size={12} className="text-monday-blue flex-shrink-0" />
                             <input
                               value={groupFilters[group.id]?.name ?? ''}
                               onChange={e => setNameFilter(group.id, e.target.value)}
-                              placeholder="Search items…"
+                              placeholder="Search all columns…"
                               className="flex-1 text-xs bg-transparent outline-none placeholder-gray-400"
                             />
                             {hasActiveFilter(group.id) && (
@@ -598,15 +937,15 @@ export default function TableView() {
                       )}
 
                       {/* Items */}
-                      <SortableContext items={groupItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
-                        {groupItems.filter(item => applyGroupFilter(group.id, item)).map(item => {
+                      <SortableContext items={pagedItems.map(i => i.id)} strategy={verticalListSortingStrategy}>
+                        {pagedItems.map(item => {
                           const subs = subtasksOf(item.id);
                           const isExpanded = !!expandedItems[item.id];
                           return (
                             <div key={item.id}>
                               <SortableItemRow
                                 item={item} group={group} columns={sortedColumns} board={board}
-                                colWidths={colWidths}
+                                colWidths={colWidths} nameWidth={nameColW}
                                 onOpen={() => setSelectedItem(item)}
                                 onDelete={() => deleteItem(item.id)}
                                 onValueChange={(colId, val) => updateItemValue(item.id, colId, val)}
@@ -614,6 +953,13 @@ export default function TableView() {
                                 expanded={isExpanded}
                                 onToggleExpand={() => setExpandedItems(e => ({ ...e, [item.id]: !e[item.id] }))}
                                 onAddSubtask={() => { setNewSubtaskFor(item.id); setNewSubtaskName(''); setExpandedItems(e => ({ ...e, [item.id]: true })); }}
+                                hasSubtasks={subs.length > 0}
+                                demoteTargets={filteredItems.filter(t => t.id !== item.id).map(t => ({ id: t.id, name: t.name }))}
+                                onDemote={pid => changeParent(item.id, pid)}
+                                templates={tplList}
+                                onRunTemplate={id => runTpl(id, item.id)}
+                                selected={selected.has(item.id)}
+                                onToggleSelect={() => toggleSelect(item.id)}
                               />
                               {/* Subtask add row — always shown on hover */}
                               {newSubtaskFor === item.id ? (
@@ -635,10 +981,15 @@ export default function TableView() {
                                   <SortableContext items={subs.map(s => s.id)} strategy={verticalListSortingStrategy}>
                                     {subs.map(sub => (
                                       <SortableItemRow key={sub.id} item={sub} group={group} columns={sortedColumns}
-                                        board={board} colWidths={colWidths} isSubtask
+                                        board={board} colWidths={colWidths} nameWidth={nameColW} isSubtask
                                         onOpen={() => setSelectedItem(sub)}
                                         onDelete={() => deleteItem(sub.id)}
                                         onValueChange={(colId, val) => updateItemValue(sub.id, colId, val)}
+                                        onPromote={() => changeParent(sub.id, null)}
+                                        templates={tplList}
+                                        onRunTemplate={id => runTpl(id, sub.id)}
+                                        selected={selected.has(sub.id)}
+                                        onToggleSelect={() => toggleSelect(sub.id)}
                                       />
                                     ))}
                                   </SortableContext>
@@ -653,6 +1004,45 @@ export default function TableView() {
                           );
                         })}
                       </SortableContext>
+
+                      {/* Pagination — 100 rows at a time. Sticky to the left so the
+                          controls stay visible no matter how wide the board scrolls. */}
+                      {pageCount > 1 && (
+                        <div className="border-b border-gray-100 bg-gray-50/60">
+                          <div className="sticky left-0 w-fit max-w-full flex items-center gap-2 px-4 py-2 text-xs text-gray-600 flex-wrap">
+                            <span className="whitespace-nowrap">
+                              {page * PAGE_SIZE + 1}–{Math.min((page + 1) * PAGE_SIZE, filteredItems.length)} of {filteredItems.length}
+                            </span>
+                            <div className="flex items-center gap-1">
+                              <button onClick={() => setPage(page - 1)} disabled={page === 0}
+                                className="px-2 py-1 rounded hover:bg-gray-200 disabled:opacity-40">‹</button>
+                              {(() => {
+                                // Windowed page numbers: always show first & last, a window
+                                // around the current page, and … gaps between.
+                                const nums: number[] = [];
+                                for (let i = 0; i < pageCount; i++) {
+                                  if (i === 0 || i === pageCount - 1 || Math.abs(i - page) <= 1) nums.push(i);
+                                }
+                                const out: React.ReactNode[] = [];
+                                let prev = -1;
+                                for (const i of nums) {
+                                  if (prev >= 0 && i - prev > 1) out.push(<span key={`g${i}`} className="px-1 text-gray-400">…</span>);
+                                  out.push(
+                                    <button key={i} onClick={() => setPage(i)}
+                                      className={`min-w-7 px-2 py-1 rounded ${i === page ? 'bg-monday-blue text-white' : 'hover:bg-gray-200'}`}>
+                                      {i + 1}
+                                    </button>
+                                  );
+                                  prev = i;
+                                }
+                                return out;
+                              })()}
+                              <button onClick={() => setPage(page + 1)} disabled={page >= pageCount - 1}
+                                className="px-2 py-1 rounded hover:bg-gray-200 disabled:opacity-40">›</button>
+                            </div>
+                          </div>
+                        </div>
+                      )}
 
                       {/* Add item row */}
                       {newItemGroup === group.id ? (
@@ -671,6 +1061,30 @@ export default function TableView() {
                             className="sticky left-0 flex items-center gap-2 text-xs text-gray-400 hover:text-monday-blue py-1.5 px-4 bg-white">
                             <Plus size={13} /> Add Item
                           </button>
+                        </div>
+                      )}
+
+                      {/* Summary footer — per-column totals over the whole group */}
+                      {sortedColumns.some(c => (c.settings as { summary?: SummaryType })?.summary) && (
+                        <div className="flex border-t-2 border-gray-200 bg-gray-50/80 text-xs">
+                          <div className="sticky left-0 z-10 flex items-center border-r border-gray-200 h-8 flex-shrink-0 bg-gray-50 font-medium text-gray-500 px-4" style={{ width: nameColW }}>
+                            Summary
+                          </div>
+                          {sortedColumns.map(col => {
+                            const w = colWidths[col.id] || DEFAULT_COL_WIDTH;
+                            const s = (col.settings as { summary?: SummaryType })?.summary;
+                            const text = s ? computeSummary(s, filteredItems.map(it => getValue(it.id, col.id))) : '';
+                            return (
+                              <div key={col.id} style={{ width: w, minWidth: w }}
+                                className="h-8 border-r border-gray-100 flex-shrink-0 flex flex-col items-center justify-center px-2 overflow-hidden">
+                                {s && <>
+                                  <span className="font-semibold text-gray-700 truncate max-w-full leading-tight">{text}</span>
+                                  <span className="text-[10px] text-gray-400 leading-tight">{SUMMARY_LABELS[s]}</span>
+                                </>}
+                              </div>
+                            );
+                          })}
+                          <div className="flex-1" />
                         </div>
                       )}
                     </>
@@ -692,7 +1106,7 @@ export default function TableView() {
       {/* Drag overlay */}
       <DragOverlay>
         {activeId && activeDragType === 'item' && activeItem && (
-          <div className="flex items-center bg-white shadow-xl rounded border border-monday-blue/30 h-9 px-4 opacity-90" style={{ width: NAME_COL_WIDTH }}>
+          <div className="flex items-center bg-white shadow-xl rounded border border-monday-blue/30 h-9 px-4 opacity-90" style={{ width: nameColW }}>
             <GripVertical size={13} className="text-gray-400 mr-2" />
             <span className="text-sm text-gray-800 truncate">{(activeItem as Item).name}</span>
           </div>
@@ -714,6 +1128,117 @@ export default function TableView() {
       {selectedItem && <ItemModal item={selectedItem} onClose={() => setSelectedItem(null)} />}
       {showAddCol && <AddColumnModal onClose={() => setShowAddCol(false)} />}
       {settingsCol && <ColumnSettingsModal column={settingsCol} onClose={() => setSettingsCol(null)} />}
+      {transferMode && board && (
+        <TransferItemsModal
+          itemIds={[...selected]}
+          currentBoardId={board.id}
+          defaultMode={transferMode}
+          onClose={() => setTransferMode(null)}
+          onDone={async () => { setTransferMode(null); clearSelection(); await refreshBoard(board.id); }}
+        />
+      )}
+
+      {/* ── Bulk action bar ──────────────────────────────────────────────── */}
+      {selected.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-40 flex items-center gap-3 bg-white shadow-2xl border border-gray-200 rounded-xl px-4 py-2.5 max-w-[95vw] flex-wrap">
+          <span className="flex items-center gap-2 text-sm font-medium text-gray-700">
+            <span className="bg-monday-blue text-white rounded-full w-6 h-6 flex items-center justify-center text-xs">{selected.size}</span>
+            selected
+          </span>
+          <div className="h-5 w-px bg-gray-200" />
+          <span className="text-sm text-gray-500">Set</span>
+          <select value={bulkColId} onChange={e => { setBulkColId(e.target.value); setBulkValue(''); }}
+            className="text-sm border border-gray-300 rounded-lg px-2 py-1.5 max-w-[150px]">
+            <option value="">column…</option>
+            {(board?.columns || [])
+              .filter(c => !['formula', 'time_tracking', 'attachments', 'person', 'timeline', 'last_updated'].includes(c.type))
+              .map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+
+          {bulkCol && (bulkCol.type === 'status' || bulkCol.type === 'priority') ? (
+            <select value={bulkValue} onChange={e => setBulkValue(e.target.value)}
+              className="text-sm border border-gray-300 rounded-lg px-2 py-1.5">
+              <option value="">(empty)</option>
+              {(bulkCol.settings?.options || []).map(o => <option key={o.label} value={o.label}>{o.label}</option>)}
+            </select>
+          ) : bulkCol && bulkCol.type === 'checkbox' ? (
+            <select value={bulkValue} onChange={e => setBulkValue(e.target.value)}
+              className="text-sm border border-gray-300 rounded-lg px-2 py-1.5">
+              <option value="">(unset)</option>
+              <option value="true">Checked</option>
+              <option value="false">Unchecked</option>
+            </select>
+          ) : bulkCol ? (
+            <input value={bulkValue} onChange={e => setBulkValue(e.target.value)}
+              type={bulkCol.type === 'number' ? 'number' : bulkCol.type === 'date' ? 'date' : 'text'}
+              placeholder="value" className="text-sm border border-gray-300 rounded-lg px-2 py-1.5 w-36" />
+          ) : null}
+
+          <button onClick={applyBulkValue} disabled={!bulkColId || bulkBusy}
+            className="text-sm bg-monday-blue text-white px-3 py-1.5 rounded-lg hover:bg-blue-600 disabled:opacity-40">
+            {bulkBusy ? 'Applying…' : 'Apply'}
+          </button>
+
+          {linkableCols.length > 0 && (
+            <>
+              <div className="h-5 w-px bg-gray-200" />
+              <span className="text-sm text-gray-500">Open links from</span>
+              <select value={openColId} onChange={e => setOpenColId(e.target.value)}
+                className="text-sm border border-gray-300 rounded-lg px-2 py-1.5 max-w-[150px]">
+                <option value="">field…</option>
+                {linkableCols.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}
+              </select>
+              <button onClick={bulkOpenLinks} disabled={!openColId}
+                className="flex items-center gap-1 text-sm bg-gray-100 text-gray-700 px-3 py-1.5 rounded-lg hover:bg-gray-200 disabled:opacity-40">
+                <ExternalLink size={14} /> Open
+              </button>
+            </>
+          )}
+
+          <div className="h-5 w-px bg-gray-200" />
+          <button onClick={() => setTransferMode('copy')}
+            className="flex items-center gap-1 text-sm text-gray-700 hover:bg-gray-100 px-2.5 py-1.5 rounded-lg">
+            <Copy size={14} /> Copy to
+          </button>
+          <button onClick={() => setTransferMode('move')}
+            className="flex items-center gap-1 text-sm text-gray-700 hover:bg-gray-100 px-2.5 py-1.5 rounded-lg">
+            <CornerUpRight size={14} /> Move to
+          </button>
+
+          <div className="h-5 w-px bg-gray-200" />
+          <button onClick={bulkDelete} disabled={bulkBusy}
+            className="flex items-center gap-1 text-sm text-red-600 hover:bg-red-50 px-2.5 py-1.5 rounded-lg disabled:opacity-40">
+            <Trash2 size={14} /> Delete
+          </button>
+          <button onClick={clearSelection} className="flex items-center gap-1 text-sm text-gray-500 hover:bg-gray-100 px-2.5 py-1.5 rounded-lg">
+            <X size={14} /> Clear
+          </button>
+        </div>
+      )}
+
+      {/* ── Blocked-links fallback ───────────────────────────────────────── */}
+      {blockedLinks.length > 0 && createPortal(
+        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-4" onClick={() => setBlockedLinks([])}>
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="px-5 py-4 border-b border-gray-100">
+              <h3 className="font-semibold text-gray-800 flex items-center gap-2"><ExternalLink size={16} /> Your browser blocked {blockedLinks.length} tab{blockedLinks.length > 1 ? 's' : ''}</h3>
+              <p className="text-xs text-gray-500 mt-1">Click a link below to open it. To open them all automatically next time, allow pop-ups for this site in your browser's address bar.</p>
+            </div>
+            <div className="overflow-auto px-5 py-3 space-y-1">
+              {blockedLinks.map((u, i) => (
+                <a key={i} href={u} target="_blank" rel="noreferrer"
+                  className="flex items-center gap-2 text-sm text-monday-blue hover:underline py-1.5 truncate">
+                  <ExternalLink size={13} className="flex-shrink-0" /><span className="truncate">{u.replace(/^https?:\/\//, '')}</span>
+                </a>
+              ))}
+            </div>
+            <div className="px-5 py-3 border-t border-gray-100 flex justify-end">
+              <button onClick={() => setBlockedLinks([])} className="text-sm text-gray-600 hover:bg-gray-100 px-3 py-1.5 rounded-lg">Close</button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
     </DndContext>
   );
 }

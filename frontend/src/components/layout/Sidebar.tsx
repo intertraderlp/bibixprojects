@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
-import { Plus, ChevronDown, ChevronRight, LayoutGrid, Bell, Search, Settings, LogOut, Home, Trash2, Users, Shield, Calendar, Bot, CalendarDays, ContactRound, FileText, Megaphone, Instagram, Linkedin, Music2, Database, Pencil, Check, X } from 'lucide-react';
+import { Plus, ChevronDown, ChevronRight, LayoutGrid, Bell, Search, Settings, LogOut, Home, Trash2, Users, Shield, Calendar, Bot, CalendarDays, ContactRound, FileText, Megaphone, Instagram, Linkedin, Music2, Database, Pencil, Check, X, Puzzle, MessageCircle, Video } from 'lucide-react';
 import { useWorkspaceStore } from '../../store/workspaceStore';
 import { useAuthStore } from '../../store/authStore';
 import Avatar from '../ui/Avatar';
@@ -88,6 +88,12 @@ export default function Sidebar() {
             <FileText size={16} /> Invoices
           </Link>
         )}
+        {hasPermission('chats') && (
+          /* Chats (WhatsApp + Telegram) is a PWA at /chats/; embedded in the app shell at /chats */
+          <Link to="/chats" className="flex items-center gap-3 px-4 py-2.5 text-white/70 hover:text-white hover:bg-monday-sidebar-hover rounded-lg mx-2 text-sm">
+            <MessageCircle size={16} /> Chats
+          </Link>
+        )}
         {hasPermission('marketing') && (
           <div>
             <button
@@ -123,9 +129,19 @@ export default function Sidebar() {
             )}
           </div>
         )}
+        {hasPermission('extensions') && (
+          <Link to="/extensions" className="flex items-center gap-3 px-4 py-2.5 text-white/70 hover:text-white hover:bg-monday-sidebar-hover rounded-lg mx-2 text-sm">
+            <Puzzle size={16} /> Extensions
+          </Link>
+        )}
         <Link to="/admin" className="flex items-center gap-3 px-4 py-2.5 text-white/70 hover:text-white hover:bg-monday-sidebar-hover rounded-lg mx-2 text-sm">
           <Shield size={16} /> User Management
         </Link>
+        {(isAdmin || isSuperAdmin) && (
+          <Link to="/videovue" className="flex items-center gap-3 px-4 py-2.5 text-white/70 hover:text-white hover:bg-monday-sidebar-hover rounded-lg mx-2 text-sm">
+            <Video size={16} /> VideoVue
+          </Link>
+        )}
         {isSuperAdmin && (
           <Link to="/backups" className="flex items-center gap-3 px-4 py-2.5 text-white/70 hover:text-white hover:bg-monday-sidebar-hover rounded-lg mx-2 text-sm">
             <Database size={16} /> Backups

@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback, useRef } from 'react';
 import { useParams } from 'react-router-dom';
-import { LayoutList, Columns, Calendar, Zap, Users, Upload, GanttChart } from 'lucide-react';
+import { LayoutList, Columns, Calendar, Zap, Users, Upload, GanttChart, Sparkles, Copy } from 'lucide-react';
 import { useBoardStore } from '../store/boardStore';
 import { useSSE } from '../hooks/useSSE';
 import type { ViewType } from '../types';
@@ -9,8 +9,10 @@ import KanbanView from '../components/board/KanbanView';
 import CalendarView from '../components/board/CalendarView';
 import GanttView from '../components/board/GanttView';
 import AutomationsPanel from '../components/board/AutomationsPanel';
+import TemplatesPanel from '../components/board/TemplatesPanel';
 import BoardMembersModal from '../components/board/BoardMembersModal';
 import ImportModal from '../components/board/ImportModal';
+import CopyStructureModal from '../components/board/CopyStructureModal';
 
 const VIEWS: { type: ViewType; label: string; icon: React.ReactNode }[] = [
   { type: 'table',    label: 'Table',    icon: <LayoutList size={16} /> },
@@ -24,8 +26,10 @@ export default function BoardPage() {
   const { board, loading, error, loadBoard, refreshBoard, updateBoard } = useBoardStore();
   const [view, setView] = useState<ViewType>('table');
   const [showAutomations, setShowAutomations] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
   const [showMembers, setShowMembers] = useState(false);
   const [showImport, setShowImport] = useState(false);
+  const [showCopyStructure, setShowCopyStructure] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const [boardName, setBoardName] = useState('');
   const boardIdRef = useRef(boardId);
@@ -92,6 +96,10 @@ export default function BoardPage() {
               className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">
               <Upload size={16} /> Import
             </button>
+            <button onClick={() => setShowCopyStructure(true)} title="Copy this board's columns onto another board"
+              className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">
+              <Copy size={16} /> Copy to
+            </button>
             <button onClick={() => setShowMembers(true)}
               className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">
               <Users size={16} /> Share
@@ -99,6 +107,10 @@ export default function BoardPage() {
             <button onClick={() => setShowAutomations(true)}
               className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">
               <Zap size={16} /> Automations
+            </button>
+            <button onClick={() => setShowTemplates(true)}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 hover:bg-gray-100 rounded-lg">
+              <Sparkles size={16} /> Templates
             </button>
           </div>
         </div>
@@ -112,8 +124,10 @@ export default function BoardPage() {
       </div>
 
       {showAutomations && <AutomationsPanel onClose={() => setShowAutomations(false)} />}
+      {showTemplates && <TemplatesPanel onClose={() => setShowTemplates(false)} />}
       {showMembers && <BoardMembersModal boardId={board.id} boardName={board.name} onClose={() => setShowMembers(false)} />}
       {showImport && <ImportModal onClose={() => setShowImport(false)} />}
+      {showCopyStructure && <CopyStructureModal sourceBoardId={board.id} sourceBoardName={board.name} onClose={() => setShowCopyStructure(false)} />}
     </div>
   );
 }

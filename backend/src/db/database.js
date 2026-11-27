@@ -123,13 +123,56 @@ const migrations = [
   "ALTER TABLE users ADD COLUMN role TEXT NOT NULL DEFAULT 'user'",
   "ALTER TABLE workspace_members ADD COLUMN access TEXT NOT NULL DEFAULT 'edit'",
   "ALTER TABLE items ADD COLUMN parent_item_id TEXT",
+  "ALTER TABLE items ADD COLUMN updated_by TEXT",
   "ALTER TABLE board_columns ADD COLUMN width INTEGER NOT NULL DEFAULT 140",
   "ALTER TABLE users ADD COLUMN permissions TEXT NOT NULL DEFAULT '{}'",
+  // Resizable / renamable first ("Item") column — stored per board
+  "ALTER TABLE boards ADD COLUMN name_col_width INTEGER NOT NULL DEFAULT 300",
+  "ALTER TABLE boards ADD COLUMN name_col_label TEXT",
+  // Simple key/value store (used by the extensions download guide, etc.)
+  "CREATE TABLE IF NOT EXISTS app_settings (key TEXT PRIMARY KEY, value TEXT)",
   // super_admin role: no schema change needed — role column already TEXT
   // This migration is a no-op placeholder to document the new valid value
 ];
 for (const m of migrations) {
   try { rawDb.exec(m); } catch { /* column already exists */ }
+}
+
+// Per-board message templates for the ⚡ row Actions (tokens + AI segments).
+try {
+  rawDb.exec(`CREATE TABLE IF NOT EXISTS message_templates (
+    id TEXT PRIMARY KEY,
+    board_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    target_column TEXT NOT NULL DEFAULT '',
+    body TEXT NOT NULL DEFAULT '',
+    ai_provider TEXT,
+    apply_styling INTEGER NOT NULL DEFAULT 0,
+    position INTEGER NOT NULL DEFAULT 0,
+    created_by TEXT,
+    created_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )`);
+} catch (e) { console.warn('[DB] message_templates skipped:', e.message); }
+
+// ── Performance indexes ───────────────────────────────────────────────────────
+// Core tables shipped with NO indexes, so every board load did full table scans —
+// and because node-sqlite3-wasm is synchronous, each scan froze the whole process.
+// Critical once a board has hundreds of items. Idempotent; built once on startup.
+const indexes = [
+  'CREATE INDEX IF NOT EXISTS idx_boards_workspace ON boards(workspace_id)',
+  'CREATE INDEX IF NOT EXISTS idx_columns_board ON board_columns(board_id)',
+  'CREATE INDEX IF NOT EXISTS idx_groups_board ON groups(board_id)',
+  'CREATE INDEX IF NOT EXISTS idx_items_board ON items(board_id)',
+  'CREATE INDEX IF NOT EXISTS idx_items_group ON items(group_id)',
+  'CREATE INDEX IF NOT EXISTS idx_item_values_column ON item_values(column_id)',
+  'CREATE INDEX IF NOT EXISTS idx_updates_item ON updates(item_id)',
+  'CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id, created_at)',
+  'CREATE INDEX IF NOT EXISTS idx_workspace_members_user ON workspace_members(user_id)',
+  'CREATE INDEX IF NOT EXISTS idx_automations_board ON automations(board_id)',
+  'CREATE INDEX IF NOT EXISTS idx_message_templates_board ON message_templates(board_id)',
+];
+for (const ix of indexes) {
+  try { rawDb.exec(ix); } catch (e) { console.warn('[DB] index skipped:', e.message); }
 }
 
 // Compatibility shim: node-sqlite3-wasm requires array params,

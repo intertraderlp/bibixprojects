@@ -34,6 +34,22 @@ function requireSuperAdmin(req, res, next) {
   next();
 }
 
+// Gate a route behind a per-user permission flag (users.permissions JSON).
+// Admins/super_admins always pass. For everyone else the key must not be
+// explicitly false — absent means allowed (backward-compatible, matches the
+// frontend hasPermission()). Use after authenticate.
+function requirePermission(key) {
+  return (req, res, next) => {
+    const user = db.prepare('SELECT role, permissions FROM users WHERE id = ?').get(req.user.id);
+    if (!user) return res.status(401).json({ error: 'Unauthorized' });
+    if (user.role === 'admin' || user.role === 'super_admin') return next();
+    let perms = {};
+    try { perms = JSON.parse(user.permissions || '{}'); } catch { /* malformed → treat as empty */ }
+    if (perms[key] === false) return res.status(403).json({ error: 'Not allowed' });
+    next();
+  };
+}
+
 // Accepts either a JWT or an instagram_api_token (used by the browser extension)
 function authenticateFlexible(req, res, next) {
   var header = req.headers.authorization || '';
@@ -53,4 +69,4 @@ function authenticateFlexible(req, res, next) {
   next();
 }
 
-module.exports = { authenticate, authenticateFlexible, requireAdmin, requireSuperAdmin, JWT_SECRET };
+module.exports = { authenticate, authenticateFlexible, requireAdmin, requireSuperAdmin, requirePermission, JWT_SECRET };

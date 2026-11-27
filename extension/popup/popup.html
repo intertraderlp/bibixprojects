@@ -32,6 +32,7 @@
       <button class="tab" data-tab="comment">Comment</button>
       <button class="tab" data-tab="reply">Reply</button>
       <button class="tab" data-tab="actions">Actions</button>
+      <button class="tab" data-tab="outreach">Outreach</button>
       <button class="tab" data-tab="candidates">Candidates</button>
       <button class="tab" data-tab="account">Account</button>
     </nav>
@@ -96,6 +97,30 @@
 
       <div class="act-hint" style="margin-top:12px;color:#94a3b8;font-size:11px">
         Tip: LinkedIn caps free accounts at ~100 requests/week. Keep sessions small.
+      </div>
+    </div>
+
+    <!-- OUTREACH TAB (campaign-driven auto-connect) -->
+    <div class="tab-panel" data-panel="outreach" hidden>
+      <div class="act-section">
+        <div class="act-title">🚀 Auto-connect</div>
+        <div class="act-hint">
+          Sends connection requests to the queued prospects in your <strong>active</strong> campaigns,
+          with the personalized note and the daily limit + delays you set in Monday.
+        </div>
+        <div id="out-summary" class="page-status">Checking your campaigns…</div>
+        <div class="act-row">
+          <label style="font-size:11px;color:#64748b">Max this run
+            <input type="number" id="out-limit" min="1" max="50" value="15" style="width:56px" />
+          </label>
+          <button id="out-start" class="primary small">Start auto-connect</button>
+          <button id="out-stop" class="secondary small" hidden>Stop</button>
+        </div>
+        <div id="out-progress" class="act-progress" hidden></div>
+      </div>
+      <div class="act-hint" style="margin-top:12px;color:#94a3b8;font-size:11px">
+        Keep a LinkedIn tab signed in. Leave this window — it runs in the background.
+        LinkedIn caps free accounts (~100–200 invites/week); keep daily limits low.
       </div>
     </div>
 

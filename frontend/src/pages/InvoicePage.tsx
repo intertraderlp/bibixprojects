@@ -1,11 +1,14 @@
 import { useEffect, useState, useCallback } from 'react';
 import {
   FileText, Building2, Users, Plus, Pencil, Trash2,
-  Download, X, ChevronDown, Save, Eye, Copy
+  Download, X, ChevronDown, Save, Eye, Copy, Share2, ScrollText
 } from 'lucide-react';
 import api from '../api/client';
 import toast from 'react-hot-toast';
 import InvoicePreview, { TemplateSelector, type PreviewInvoice } from '../components/invoices/InvoicePreview';
+import ShareModal from '../components/invoices/ShareModal';
+import AgreementsTab from '../components/invoices/AgreementsTab';
+import EntityDetailDrawer from '../components/invoices/EntityDetailDrawer';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -63,14 +66,18 @@ interface Invoice {
   company_name?: string;
   client_name?: string;
   items?: InvoiceItem[];
+  access?: 'owner' | 'view' | 'edit';
+  shared?: boolean;
+  owner_name?: string;
 }
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
-type Tab = 'invoices' | 'companies' | 'clients';
+type Tab = 'invoices' | 'agreements' | 'companies' | 'clients';
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: 'invoices',   label: 'Invoices',      icon: <FileText size={15} />  },
+  { id: 'agreements', label: 'Agreements',    icon: <ScrollText size={15} /> },
   { id: 'companies',  label: 'My Companies',  icon: <Building2 size={15} /> },
   { id: 'clients',    label: 'Clients',       icon: <Users size={15} />     },
 ];
@@ -613,6 +620,7 @@ function InvoicesTab({ companies, clients }: { companies: MyCompany[]; clients: 
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState<Invoice | null | 'new'>(null);
   const [previewInvoice, setPreviewInvoice] = useState<PreviewInvoice | null>(null);
+  const [shareFor, setShareFor] = useState<Invoice | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -751,7 +759,12 @@ function InvoicesTab({ companies, clients }: { companies: MyCompany[]; clients: 
             <tbody>
               {invoices.map((inv, idx) => (
                 <tr key={inv.id} className={`border-b border-gray-100 last:border-b-0 hover:bg-gray-50 ${idx % 2 === 0 ? '' : 'bg-gray-50/30'}`}>
-                  <td className="px-4 py-3 font-medium text-gray-900">{inv.invoice_number}</td>
+                  <td className="px-4 py-3 font-medium text-gray-900">
+                    <div className="flex items-center gap-2">
+                      <span>{inv.invoice_number}</span>
+                      {inv.shared && <span className="text-[10px] font-medium bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded-full" title={`Shared with you (${inv.access})`}>shared · {inv.access}</span>}
+                    </div>
+                  </td>
                   <td className="px-4 py-3 text-gray-600">{inv.client_name || '—'}</td>
                   <td className="px-4 py-3 text-gray-600">{inv.company_name || '—'}</td>
                   <td className="px-4 py-3 text-gray-500">{inv.issue_date}</td>
@@ -769,22 +782,34 @@ function InvoicesTab({ companies, clients }: { companies: MyCompany[]; clients: 
                         className="p-1.5 text-gray-400 hover:text-purple-600 hover:bg-purple-50 rounded-lg" title="Preview">
                         <Eye size={14} />
                       </button>
-                      <button onClick={() => handleEdit(inv.id)}
-                        className="p-1.5 text-gray-400 hover:text-monday-blue hover:bg-blue-50 rounded-lg" title="Edit">
-                        <Pencil size={14} />
-                      </button>
-                      <button onClick={() => handleCopy(inv.id)}
-                        className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg" title="Copy / Duplicate">
-                        <Copy size={14} />
-                      </button>
+                      {inv.access !== 'view' && (
+                        <button onClick={() => handleEdit(inv.id)}
+                          className="p-1.5 text-gray-400 hover:text-monday-blue hover:bg-blue-50 rounded-lg" title="Edit">
+                          <Pencil size={14} />
+                        </button>
+                      )}
+                      {(inv.access ?? 'owner') === 'owner' && (
+                        <button onClick={() => handleCopy(inv.id)}
+                          className="p-1.5 text-gray-400 hover:text-green-600 hover:bg-green-50 rounded-lg" title="Copy / Duplicate">
+                          <Copy size={14} />
+                        </button>
+                      )}
                       <button onClick={() => handleDownload(inv)}
                         className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg" title="Print / Save PDF">
                         <Download size={14} />
                       </button>
-                      <button onClick={() => handleDelete(inv.id)}
-                        className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg" title="Delete">
-                        <Trash2 size={14} />
-                      </button>
+                      {(inv.access ?? 'owner') === 'owner' && (
+                        <button onClick={() => setShareFor(inv)}
+                          className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg" title="Share">
+                          <Share2 size={14} />
+                        </button>
+                      )}
+                      {(inv.access ?? 'owner') === 'owner' && (
+                        <button onClick={() => handleDelete(inv.id)}
+                          className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg" title="Delete">
+                          <Trash2 size={14} />
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -810,6 +835,10 @@ function InvoicesTab({ companies, clients }: { companies: MyCompany[]; clients: 
           onClose={() => setPreviewInvoice(null)}
         />
       )}
+
+      {shareFor && (
+        <ShareModal base="/invoices" id={shareFor.id} title={`Invoice ${shareFor.invoice_number}`} onClose={() => setShareFor(null)} />
+      )}
     </div>
   );
 }
@@ -818,9 +847,10 @@ function InvoicesTab({ companies, clients }: { companies: MyCompany[]; clients: 
 // COMPANIES TAB
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function CompaniesTab({ companies, setCompanies }: {
+function CompaniesTab({ companies, setCompanies, onOpenDetail }: {
   companies: MyCompany[];
   setCompanies: React.Dispatch<React.SetStateAction<MyCompany[]>>;
+  onOpenDetail: (e: { type: 'client' | 'company'; id: string; name: string }) => void;
 }) {
   const [modal, setModal] = useState<MyCompany | null | 'new'>(null);
 
@@ -860,17 +890,18 @@ function CompaniesTab({ companies, setCompanies }: {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {companies.map(c => (
-            <div key={c.id} className="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md transition-shadow">
+            <div key={c.id} onClick={() => onOpenDetail({ type: 'company', id: c.id, name: c.name })}
+              className="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md transition-shadow cursor-pointer">
               <div className="flex items-start justify-between mb-3">
                 <div className="w-10 h-10 rounded-xl bg-monday-blue flex items-center justify-center flex-shrink-0">
                   <Building2 size={18} className="text-white" />
                 </div>
                 <div className="flex gap-1">
-                  <button onClick={() => setModal(c)}
+                  <button onClick={e => { e.stopPropagation(); setModal(c); }}
                     className="p-1.5 text-gray-400 hover:text-monday-blue hover:bg-blue-50 rounded-lg">
                     <Pencil size={13} />
                   </button>
-                  <button onClick={() => handleDelete(c.id)}
+                  <button onClick={e => { e.stopPropagation(); handleDelete(c.id); }}
                     className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg">
                     <Trash2 size={13} />
                   </button>
@@ -902,9 +933,10 @@ function CompaniesTab({ companies, setCompanies }: {
 // CLIENTS TAB
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function ClientsTab({ clients, setClients }: {
+function ClientsTab({ clients, setClients, onOpenDetail }: {
   clients: Client[];
   setClients: React.Dispatch<React.SetStateAction<Client[]>>;
+  onOpenDetail: (e: { type: 'client' | 'company'; id: string; name: string }) => void;
 }) {
   const [modal, setModal] = useState<Client | null | 'new'>(null);
 
@@ -944,17 +976,18 @@ function ClientsTab({ clients, setClients }: {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {clients.map(c => (
-            <div key={c.id} className="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md transition-shadow">
+            <div key={c.id} onClick={() => onOpenDetail({ type: 'client', id: c.id, name: c.name })}
+              className="bg-white border border-gray-200 rounded-xl p-5 hover:shadow-md transition-shadow cursor-pointer">
               <div className="flex items-start justify-between mb-3">
                 <div className="w-10 h-10 rounded-xl bg-purple-100 flex items-center justify-center flex-shrink-0">
                   <Users size={18} className="text-purple-600" />
                 </div>
                 <div className="flex gap-1">
-                  <button onClick={() => setModal(c)}
+                  <button onClick={e => { e.stopPropagation(); setModal(c); }}
                     className="p-1.5 text-gray-400 hover:text-monday-blue hover:bg-blue-50 rounded-lg">
                     <Pencil size={13} />
                   </button>
-                  <button onClick={() => handleDelete(c.id)}
+                  <button onClick={e => { e.stopPropagation(); handleDelete(c.id); }}
                     className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-lg">
                     <Trash2 size={13} />
                   </button>
@@ -992,6 +1025,7 @@ export default function InvoicePage() {
   const [companies, setCompanies] = useState<MyCompany[]>([]);
   const [clients, setClients]     = useState<Client[]>([]);
   const [loadingMeta, setLoadingMeta] = useState(true);
+  const [detail, setDetail] = useState<{ type: 'client' | 'company'; id: string; name: string } | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -1041,12 +1075,17 @@ export default function InvoicePage() {
           </div>
         ) : (
           <>
-            {tab === 'invoices'  && <InvoicesTab companies={companies} clients={clients} />}
-            {tab === 'companies' && <CompaniesTab companies={companies} setCompanies={setCompanies} />}
-            {tab === 'clients'   && <ClientsTab clients={clients} setClients={setClients} />}
+            {tab === 'invoices'   && <InvoicesTab companies={companies} clients={clients} />}
+            {tab === 'agreements' && <AgreementsTab companies={companies} clients={clients} />}
+            {tab === 'companies'  && <CompaniesTab companies={companies} setCompanies={setCompanies} onOpenDetail={setDetail} />}
+            {tab === 'clients'    && <ClientsTab clients={clients} setClients={setClients} onOpenDetail={setDetail} />}
           </>
         )}
       </div>
+
+      {detail && (
+        <EntityDetailDrawer entity={detail} companies={companies} clients={clients} onClose={() => setDetail(null)} />
+      )}
     </div>
   );
 }

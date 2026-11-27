@@ -240,7 +240,9 @@ router.post('/', authenticate, upload.single('file'), (req, res) => {
   let skippedRows   = 0;
   const itemNameToId = {}; // name (lowercased) → id, for parent linking
 
-  const tx = db.transaction(() => {
+  // NOTE: the node-sqlite3-wasm wrapper has no .transaction(); use manual
+  // BEGIN/COMMIT/ROLLBACK via exec() (see the try/catch below).
+  const tx = () => {
     rows.forEach((row, idx) => {
       const rowNum   = idx + 2; // row 1 = header
       const groupName = String(row['Group'] || '').trim() || 'Imported';
@@ -317,10 +319,12 @@ router.post('/', authenticate, upload.single('file'), (req, res) => {
         }
       }
     });
-  });
+  };
 
   try {
+    db.exec('BEGIN');
     tx();
+    db.exec('COMMIT');
     res.json({
       imported: importedItems,
       skipped:  skippedRows,
@@ -328,6 +332,7 @@ router.post('/', authenticate, upload.single('file'), (req, res) => {
       errors:   issues,
     });
   } catch (err) {
+    try { db.exec('ROLLBACK'); } catch (_) {}
     res.status(500).json({ error: err.message });
   }
 });

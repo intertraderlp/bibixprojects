@@ -2,11 +2,12 @@ import { useState } from 'react';
 import {
   Plus, Trash2, GripVertical, AlertTriangle,
   Type, Star, Flag, User, Calendar, Hash, CheckSquare,
-  Tag, Link, Paperclip, ArrowRight,
+  Tag, Link, Paperclip, ArrowRight, Calculator, Timer,
 } from 'lucide-react';
 import { useBoardStore } from '../../store/boardStore';
 import type { Column, ColumnType, StatusOption } from '../../types';
 import Modal from '../ui/Modal';
+import FormulaEditor from './FormulaEditor';
 import toast from 'react-hot-toast';
 
 interface Props { column: Column; onClose: () => void; }
@@ -25,6 +26,8 @@ const COLUMN_TYPES: { type: ColumnType; label: string; icon: React.ReactNode }[]
   { type: 'timeline',    label: 'Timeline',    icon: <ArrowRight size={14} />  },
   { type: 'person',      label: 'Person',      icon: <User size={14} />        },
   { type: 'attachments', label: 'Attachments', icon: <Paperclip size={14} />   },
+  { type: 'formula',     label: 'Formula',     icon: <Calculator size={14} />  },
+  { type: 'time_tracking', label: 'Time',      icon: <Timer size={14} />       },
 ];
 
 // ── Default options for status/priority ───────────────────────────────────────
@@ -53,10 +56,11 @@ const PRESET_COLORS = [
 // ── Component ─────────────────────────────────────────────────────────────────
 
 export default function ColumnSettingsModal({ column, onClose }: Props) {
-  const { updateColumn } = useBoardStore();
+  const { updateColumn, board } = useBoardStore();
 
   const [name, setName]       = useState(column.name);
   const [type, setType]       = useState<ColumnType>(column.type);
+  const [formula, setFormula] = useState<string>((column.settings as { formula?: string })?.formula || '');
   const [options, setOptions] = useState<StatusOption[]>(
     Array.isArray(column.settings?.options) ? [...column.settings.options] : []
   );
@@ -64,6 +68,8 @@ export default function ColumnSettingsModal({ column, onClose }: Props) {
 
   const typeChanged    = type !== column.type;
   const isOptionType   = type === 'status' || type === 'priority';
+  const isFormula      = type === 'formula';
+  const otherColumns   = (board?.columns || []).filter(c => c.id !== column.id);
 
   // When user picks a new type, seed default options if switching TO status/priority
   const handleTypeChange = (newType: ColumnType) => {
@@ -95,7 +101,7 @@ export default function ColumnSettingsModal({ column, onClose }: Props) {
       await updateColumn(column.id, {
         name:     name.trim() || column.name,
         type,
-        settings: isOptionType ? { ...column.settings, options } : {},
+        settings: isFormula ? { formula } : isOptionType ? { ...column.settings, options } : {},
       });
       toast.success('Column updated');
       onClose();
@@ -225,6 +231,16 @@ export default function ColumnSettingsModal({ column, onClose }: Props) {
             >
               <Plus size={15} /> Add Option
             </button>
+          </div>
+        )}
+
+        {/* ── Formula editor ─────────────────────────────────────────────── */}
+        {isFormula && (
+          <div>
+            <label className="block text-xs font-semibold text-gray-500 mb-1.5 uppercase tracking-wider">
+              Formula
+            </label>
+            <FormulaEditor value={formula} onChange={setFormula} columns={otherColumns} />
           </div>
         )}
 
