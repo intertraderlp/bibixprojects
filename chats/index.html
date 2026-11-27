@@ -12,7 +12,7 @@
 <link rel="icon" href="/chats/icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/chats/icon-192.png">
 <title>Bibix Chats</title>
-<link rel="stylesheet" href="/chats/style.css?v=5">
+<link rel="stylesheet" href="/chats/style.css?v=6">
 </head>
 <body>
 <div id="app">
@@ -36,6 +36,7 @@
         <select id="account-select" title="Account"></select>
         <button class="icon" id="btn-add-account" title="Add an account (WhatsApp or Telegram)">＋</button>
         <button class="icon" id="btn-remove-account" title="Remove the selected account">－</button>
+        <button class="icon" id="btn-bots" title="AI chat bots">🤖</button>
         <button class="icon" id="btn-settings" title="Settings">⚙</button>
       </header>
       <div id="account-banner" class="banner hidden"></div>
@@ -54,6 +55,7 @@
         <button class="icon" id="btn-thread-menu" title="More">⋮</button>
       </header>
       <div id="call-menu" class="menu hidden"></div>
+      <div id="thread-menu" class="menu hidden"></div>
       <div class="bx-bar" id="bx-bar">
         <span class="bx-toggle on" id="bx-enabled" title="Enable / disable translation for all chats"></span>
         <label>Send in <select id="bx-target" title="Language my messages are sent in (per chat)"></select></label>
@@ -258,8 +260,167 @@
     </div>
   </div>
 
+  <!-- AI chat bots dashboard -->
+  <section id="s-bots" class="screen hidden">
+    <div class="bots-wrap">
+      <header class="bots-head">
+        <button class="icon" id="bots-back" title="Back to chats">‹</button>
+        <b>🤖 Chat bots</b>
+        <label class="chk sw" title="Master switch: when off, no bot answers anywhere"><input type="checkbox" id="bots-master"><span>All bots on</span></label>
+        <span class="sp"></span>
+        <button class="btn primary" id="bots-new">+ New bot</button>
+      </header>
+      <div class="bots-body">
+        <aside id="bots-list"><div class="muted bots-empty">Loading…</div></aside>
+        <main id="bots-editor" class="hidden">
+          <div class="be-head">
+            <button class="icon be-back" id="be-back" title="Back to the list">‹</button>
+            <input id="bt-emoji" class="be-emoji" maxlength="4" title="Emoji shown next to the bot">
+            <input id="bt-name" class="be-name" placeholder="Bot name">
+            <label class="chk sw" title="Only enabled bots answer"><input type="checkbox" id="bt-enabled"><span>Enabled</span></label>
+            <label class="be-prio" title="Higher priority wins when several bots match a chat">Priority <input type="number" id="bt-priority" step="1"></label>
+            <span class="sp"></span>
+            <button class="sm" id="bt-dup" title="Copy this bot (disabled) to tweak">Duplicate</button>
+            <button class="sm danger" id="bt-del">Delete</button>
+            <button class="btn primary" id="bt-save">Save</button>
+          </div>
+          <div class="tabs be-tabs">
+            <button class="tab on" data-bt="character">Character</button><button class="tab" data-bt="style">Style</button><button class="tab" data-bt="language">Language</button>
+            <button class="tab" data-bt="targeting">Targeting</button><button class="tab" data-bt="behaviour">Behaviour</button><button class="tab" data-bt="knowledge">Knowledge</button>
+            <button class="tab" data-bt="model">Model</button><button class="tab" data-bt="test">Test</button><button class="tab" data-bt="activity">Activity</button>
+          </div>
+          <div class="be-body">
+            <div class="be-tab stab" data-bt="character">
+              <p class="muted">Who the bot is. Everything here goes into the prompt as the character the bot plays — it never says it is an AI.</p>
+              <div class="grid2">
+                <label>Name <input id="bt-p-name" placeholder="e.g. Sofía"></label>
+                <label>Role <input id="bt-p-role" placeholder="e.g. customer care rep, travel agent, your personal assistant"></label>
+                <label>Company / project <input id="bt-p-company" placeholder="e.g. Bibix"></label>
+                <label>Personality traits <input id="bt-p-traits" placeholder="e.g. cheerful, patient, direct, a bit cheeky"></label>
+              </div>
+              <label>Background story <textarea id="bt-p-background" rows="3" placeholder="Where they are from, what they do, details that make them feel real…"></textarea></label>
+              <label>Goals — what the bot tries to achieve in the conversation <textarea id="bt-p-goals" rows="3" placeholder="e.g. qualify the lead (budget, timing), book a 20-minute demo call, collect the email address…"></textarea></label>
+              <label>Rules — what it must always / never do <textarea id="bt-p-rules" rows="3" placeholder="e.g. never promise discounts; never share phone numbers; if asked about prices, point to the website; never discuss politics"></textarea></label>
+              <label>Opening — how to start when the chat is new <textarea id="bt-p-opening" rows="2" placeholder="e.g. greet by name if known, ask what brought them here"></textarea></label>
+            </div>
+            <div class="be-tab stab hidden" data-bt="style">
+              <p class="muted">Tone of the conversation. The bot writes like a person texting: no lists, no headings.</p>
+              <div class="grid3">
+                <label>Formality <select id="bt-s-formality"><option value="very-casual">Very casual</option><option value="casual">Casual</option><option value="neutral">Neutral</option><option value="formal">Formal</option><option value="very-formal">Very formal</option></select></label>
+                <label>Warmth <select id="bt-s-warmth"><option value="cold">Reserved</option><option value="neutral">Neutral</option><option value="warm">Warm</option><option value="very-warm">Very warm</option></select></label>
+                <label>Humour <select id="bt-s-humour"><option value="none">None</option><option value="light">Light</option><option value="playful">Playful</option></select></label>
+                <label>Emojis <select id="bt-s-emoji"><option value="none">Never</option><option value="rare">Rarely</option><option value="some">Some</option><option value="lots">Lots</option></select></label>
+                <label>Message length <select id="bt-s-length"><option value="one-liner">One-liner</option><option value="short">Short (1–2 sentences)</option><option value="medium">Medium</option><option value="long">Long</option></select></label>
+                <label>Bubbles per reply <select id="bt-s-bubbles"><option value="1">1</option><option value="2">Up to 2</option><option value="3">Up to 3</option><option value="4">Up to 4</option></select></label>
+              </div>
+              <label>Style notes <input id="bt-s-notes" placeholder='e.g. "use tú, Valencian expressions", "British spelling", "sign off with a question"'></label>
+              <label>Custom prompt (advanced) <textarea id="bt-s-custom" rows="5" placeholder="Extra instructions appended to the generated prompt — or the whole prompt if you tick the box below"></textarea></label>
+              <label class="chk"><input type="checkbox" id="bt-s-replace"> Use the custom prompt <b>instead of</b> the generated character/style prompt (language and format rules are still added)</label>
+              <details class="be-preview"><summary>Preview the generated prompt</summary><pre id="bt-prompt-preview"></pre></details>
+            </div>
+            <div class="be-tab stab hidden" data-bt="language">
+              <div class="grid2">
+                <label>Reply language <select id="bt-l-mode"><option value="auto">Auto — mirror the contact's language</option><option value="fixed">Always the same language</option></select></label>
+                <label id="bt-l-fixed-wrap">Fixed language <select id="bt-l-fixed"></select></label>
+                <label id="bt-l-fallback-wrap">When the language can't be told <select id="bt-l-fallback"></select></label>
+              </div>
+              <p class="muted">In auto mode the detected language is stored on the chat (the "Send in" language) and can be changed by hand in the chat bar at any time — the bot follows that choice. The language a chat is in is also available as a targeting rule.</p>
+            </div>
+            <div class="be-tab stab hidden" data-bt="targeting">
+              <p class="muted">Which chats this bot answers. Empty = any. When several bots match, the highest priority wins; a chat can also be pinned to one bot (⋮ menu in the chat).</p>
+              <fieldset class="fs"><legend>Accounts &amp; platforms</legend>
+                <div id="bt-m-accounts" class="chkrow"></div>
+                <div class="chkrow"><label class="chk"><input type="checkbox" data-pf="whatsapp"> WhatsApp</label><label class="chk"><input type="checkbox" data-pf="telegram"> Telegram</label></div>
+              </fieldset>
+              <fieldset class="fs"><legend>Countries (from the phone number)</legend>
+                <label>Only these countries <div class="chips" id="bt-m-countries"></div></label>
+                <label>Never these countries <div class="chips" id="bt-m-exclude"></div></label>
+                <p class="muted">Telegram chats carry no phone number, so a country rule only matches WhatsApp chats.</p>
+              </fieldset>
+              <fieldset class="fs"><legend>Language &amp; contact</legend>
+                <label>Only chats in these languages <div class="chips" id="bt-m-languages"></div></label>
+                <div class="grid3">
+                  <label>Chat type <select id="bt-m-chattype"><option value="private">Private chats only</option><option value="group">Groups only</option><option value="any">Any</option></select></label>
+                  <label>Contact <select id="bt-m-contacts"><option value="any">Any</option><option value="saved">Saved in my phone</option><option value="unsaved">Unknown numbers only</option></select></label>
+                  <label class="chk" style="margin-top:22px"><input type="checkbox" id="bt-m-first"> Only the first message from a new contact</label>
+                </div>
+                <label>Only when the message contains (comma-separated) <input id="bt-m-keywords" placeholder="e.g. price, demo, book, precio"></label>
+              </fieldset>
+              <fieldset class="fs"><legend>Active hours</legend>
+                <label class="chk"><input type="checkbox" id="bt-h-on"> Only answer during these hours</label>
+                <div class="grid3 hours">
+                  <label>From <input type="time" id="bt-h-from" value="09:00"></label>
+                  <label>To <input type="time" id="bt-h-to" value="18:00"></label>
+                  <label>Time zone <input id="bt-h-tz" list="dl-tz" placeholder="Europe/Madrid"></label>
+                </div>
+                <div class="days" id="bt-h-days"><button type="button" data-d="1">Mon</button><button type="button" data-d="2">Tue</button><button type="button" data-d="3">Wed</button><button type="button" data-d="4">Thu</button><button type="button" data-d="5">Fri</button><button type="button" data-d="6">Sat</button><button type="button" data-d="7">Sun</button></div>
+                <p class="muted">Outside these hours the bot stays silent — a lower-priority bot without hours can take over (e.g. a "night" bot that only takes a message).</p>
+              </fieldset>
+              <datalist id="dl-tz"></datalist>
+            </div>
+            <div class="be-tab stab hidden" data-bt="behaviour">
+              <fieldset class="fs"><legend>Timing</legend>
+                <div class="grid3">
+                  <label>Wait for more messages (s) <input type="number" id="bt-b-debounce" min="0" max="60"></label>
+                  <label>Reply delay min (s) <input type="number" id="bt-b-dmin" min="0" max="120"></label>
+                  <label>Reply delay max (s) <input type="number" id="bt-b-dmax" min="0" max="600"></label>
+                </div>
+                <label class="chk"><input type="checkbox" id="bt-b-typing"> Show "typing…" while waiting</label>
+                <label>Ignore messages older than (min) — after a reconnect the backlog is not answered <input type="number" id="bt-b-maxage" min="1" max="1440"></label>
+              </fieldset>
+              <fieldset class="fs"><legend>Limits</legend>
+                <div class="grid3">
+                  <label>Max replies per chat per day <input type="number" id="bt-b-maxday" min="0"></label>
+                  <label>Max replies per chat ever (0 = no limit) <input type="number" id="bt-b-maxtotal" min="0"></label>
+                  <label>Messages of context sent to the model <input type="number" id="bt-b-history" min="2" max="60"></label>
+                </div>
+                <label class="chk"><input type="checkbox" id="bt-b-media"> Also reply to photos / voice notes / files (the bot only sees "[photo]")</label>
+              </fieldset>
+              <fieldset class="fs"><legend>Hand-off to a person</legend>
+                <label>When I reply myself, the bot stays quiet for (min) <input type="number" id="bt-b-handoffmin" min="0"></label>
+                <label>Words that mean "I want a person" (comma-separated) <input id="bt-b-handoffkw" placeholder="human, agent, persona, agente, humano"></label>
+                <label>Message to send when handing off (optional) <input id="bt-b-handoffmsg" placeholder="e.g. Sure — a colleague will get back to you shortly."></label>
+                <div class="grid2">
+                  <label>Then pause the bot in that chat for (hours) <input type="number" id="bt-b-pausehrs" min="1"></label>
+                  <label class="chk" style="margin-top:22px"><input type="checkbox" id="bt-b-notify"> Push-notify me when a contact asks for a person</label>
+                </div>
+              </fieldset>
+            </div>
+            <div class="be-tab stab hidden" data-bt="knowledge">
+              <p class="muted">Facts the bot may use: prices, opening hours, FAQ, product details, links. It is told never to invent facts beyond these.</p>
+              <textarea id="bt-k" rows="16" placeholder="Q: How much is it?&#10;A: Plans start at 29 €/month…&#10;&#10;Office hours: Mon–Fri 9–18 CET&#10;Website: https://…"></textarea>
+            </div>
+            <div class="be-tab stab hidden" data-bt="model">
+              <div class="grid3">
+                <label>AI provider <select id="bt-mo-provider"><option value="">Same as translation settings</option></select></label>
+                <label>Model (optional) <input id="bt-mo-model" placeholder="provider default"></label>
+                <label>Max reply tokens <input type="number" id="bt-mo-max" min="50" max="4000"></label>
+              </div>
+              <label>Creativity <input type="range" id="bt-mo-temp" min="0" max="1.5" step="0.05"> <span id="bt-mo-temp-v" class="muted"></span></label>
+              <p class="muted" id="bt-mo-info"></p>
+            </div>
+            <div class="be-tab stab hidden" data-bt="test">
+              <div class="grid3 test-ctx">
+                <label>Contact name <input id="bt-t-name" value="Alex"></label>
+                <label>Country <select id="bt-t-country"><option value="">—</option></select></label>
+                <label>Platform <select id="bt-t-platform"><option value="whatsapp">WhatsApp</option><option value="telegram">Telegram</option></select></label>
+              </div>
+              <div class="test-chat" id="bt-t-log"><div class="muted">Write as the contact would. Nothing is sent anywhere — this uses the bot exactly as configured above (unsaved changes included).</div></div>
+              <div class="test-row"><input id="bt-t-in" placeholder="Message from the contact…" autocomplete="off"><button class="btn primary" id="bt-t-send">Send</button><button class="sm" id="bt-t-reset">Reset</button></div>
+              <details class="be-preview"><summary>Prompt and raw model output of the last reply</summary><pre id="bt-t-prompt"></pre></details>
+            </div>
+            <div class="be-tab stab hidden" data-bt="activity">
+              <div id="bt-stats" class="stats"></div>
+              <div id="bt-log" class="botlog"></div>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+  </section>
+
   <div id="toast" class="toast hidden"></div>
 </div>
-<script src="/chats/app.js?v=6"></script>
+<script src="/chats/app.js?v=7"></script>
 </body>
 </html>

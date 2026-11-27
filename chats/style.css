@@ -239,3 +239,61 @@ body.embed .pane-head .logo{display:none}
 .emoji-grid.stk .st .x{display:none;position:absolute;top:2px;right:2px;width:20px;height:20px;border-radius:50%;background:#ef4444;color:#fff;font-size:12px;place-items:center}
 .emoji.editing .emoji-grid.stk .st .x{display:grid}
 .stk-bar{display:flex;gap:6px;align-items:center;padding:6px 8px;border-top:1px solid #eef3f1;font-size:11.5px}
+
+/* v7: AI chat bots */
+#s-bots{flex-direction:column}
+.bots-wrap{flex:1;min-height:0;display:flex;flex-direction:column;width:100%}
+.bots-head{display:flex;align-items:center;gap:10px;padding:calc(var(--st) + 8px) 12px 8px;background:var(--card);border-bottom:1px solid var(--bd)}
+.bots-head b{font-size:16px}
+.sp{flex:1}
+.chk.sw{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted);margin:0}
+.bots-body{flex:1;min-height:0;display:flex}
+#bots-list{width:320px;flex:none;border-right:1px solid var(--bd);overflow-y:auto;background:var(--bg);padding:10px}
+.bots-empty{padding:30px 10px;text-align:center;line-height:1.5}
+.bot-card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:10px 12px;margin-bottom:10px;cursor:pointer}
+.bot-card.on{border-color:var(--teal);box-shadow:0 0 0 2px var(--teal-lt)}
+.bot-card.off{opacity:.6}
+.bot-card .t{display:flex;align-items:center;gap:8px}.bot-card .t b{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bot-card .em{font-size:20px}.bot-card .pr{font-size:10.5px;color:var(--muted);background:#eef2f1;border-radius:4px;padding:1px 5px}
+.bot-card .sum{font-size:12px;color:var(--muted);margin-top:4px;line-height:1.35}
+.bot-card .st{display:flex;gap:10px;font-size:11.5px;color:var(--muted);margin-top:6px}.bot-card .st b{color:var(--text)}
+.bot-card .st .err{color:var(--red)}
+.switch{position:relative;width:34px;height:20px;border-radius:999px;background:#cbd5d1;flex:none;transition:background .15s}.switch::after{content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;border-radius:50%;background:#fff;transition:left .15s}
+.switch.on{background:var(--teal)}.switch.on::after{left:16px}
+#bots-editor{flex:1;min-width:0;display:flex;flex-direction:column;background:var(--card)}
+.be-head{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--bd);flex-wrap:wrap}
+.be-emoji{width:46px;text-align:center;font-size:20px;border:1px solid var(--bd);border-radius:8px;padding:4px}
+.be-name{flex:1;min-width:140px;font-size:16px;font-weight:700;border:1px solid transparent;border-radius:8px;padding:6px 8px}.be-name:focus{border-color:var(--bd);outline:none}
+.be-prio{font-size:12.5px;color:var(--muted);display:inline-flex;align-items:center;gap:4px}.be-prio input{width:56px;padding:4px 6px;border:1px solid var(--bd);border-radius:6px}
+.be-back{display:none}
+.sm.danger{color:var(--red);border-color:#f3c6c1}
+.be-tabs{padding:6px 8px;border-bottom:1px solid var(--bd);overflow-x:auto;flex-wrap:nowrap}.be-tabs .tab{flex:none}
+.be-body{flex:1;min-height:0;overflow-y:auto;padding:12px 16px 40px}
+.be-tab textarea{display:block;width:100%;margin-top:4px;padding:8px 10px;border:1px solid var(--bd);border-radius:8px;background:#fff;resize:vertical;font:inherit}
+.be-tab .fs{margin:10px 0}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:0 14px}
+.chkrow{display:flex;flex-wrap:wrap;gap:4px 16px;margin:4px 0}
+.chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:4px;padding:6px;border:1px solid var(--bd);border-radius:8px;background:#fff;min-height:40px}
+.chips .chip{background:var(--teal-lt);color:#0b6b5d;border-radius:999px;padding:3px 8px 3px 10px;font-size:12.5px;display:inline-flex;align-items:center;gap:4px}
+.chips .chip button{border:none;background:transparent;font-size:13px;line-height:1;padding:0 2px;color:#0b6b5d}
+.chips input{flex:1;min-width:140px;border:none;outline:none;padding:4px;margin:0!important;display:inline-block!important;width:auto!important}
+.days{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}.days button{border:1px solid var(--bd);background:#fff;border-radius:999px;padding:4px 10px;font-size:12.5px}.days button.on{background:var(--teal);border-color:var(--teal);color:#fff}
+.be-preview{margin-top:10px}.be-preview pre{white-space:pre-wrap;font-size:12px;background:#f6f8f7;border:1px solid var(--bd);border-radius:8px;padding:10px;max-height:320px;overflow:auto;margin-top:6px}
+.test-chat{border:1px solid var(--bd);border-radius:12px;background:#efeae2;padding:12px;min-height:260px;max-height:50vh;overflow-y:auto;display:flex;flex-direction:column;gap:6px}
+.test-chat .tb{max-width:80%;padding:7px 10px;border-radius:10px;background:#fff;box-shadow:0 1px 1px rgba(0,0,0,.08);white-space:pre-wrap;font-size:14px}
+.test-chat .tb.bot{align-self:flex-end;background:var(--out)}.test-chat .tb.sys{align-self:center;background:#fff7e6;color:#7a4b00;font-size:12px}
+.test-chat .tb small{display:block;color:var(--muted);font-size:10.5px;margin-top:2px}
+.test-row{display:flex;gap:8px;margin-top:8px}.test-row input{flex:1;padding:9px 12px;border:1px solid var(--bd);border-radius:10px}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(110px,1fr));gap:8px;margin-bottom:12px}.stats div{background:var(--bg);border-radius:10px;padding:10px;text-align:center}.stats b{display:block;font-size:20px}.stats span{font-size:11.5px;color:var(--muted)}
+.botlog .r{border-bottom:1px solid var(--bd);padding:8px 0;font-size:13px}.botlog .r .h{display:flex;gap:8px;color:var(--muted);font-size:11.5px}.botlog .r .in{color:var(--muted)}.botlog .r .out{margin-top:2px}.botlog .r .e{color:var(--red)}
+.ci-bot{font-size:12px;flex:none;opacity:.9}.ci-bot.paused{opacity:.4;filter:grayscale(1)}
+.meta .bt{font-size:10px;margin-right:3px;opacity:.8}
+#thread-menu .on{background:var(--teal-lt);font-weight:600}
+@media (max-width:767px){
+  .bots-body{position:relative}
+  #bots-list{width:100%;border-right:none}
+  #bots-editor{position:absolute;inset:0}
+  .be-back{display:grid}
+  .grid3{grid-template-columns:1fr}
+  .be-head .sm{padding:4px 8px}
+}
